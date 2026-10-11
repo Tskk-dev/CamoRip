@@ -15,7 +15,8 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, Slider> _sliders;
     private CameraState? _state;
     private bool _ready, _updating, _exiting, _hidden, _fullscreen, _sending;
-    private long _requestId, _confirmedId, _lastSent;
+    private long _requestId, _confirmedId, _lastSent, _timedOutId = -1;
+    private bool _switching;
     private GpuPreview? _gpu;
     private bool _rendering;
     private long _previewRetry;
@@ -34,7 +35,7 @@ public sealed partial class MainWindow : Window
         PreviewRate.SelectedIndex = settings.PreviewFps switch { 30 => 1, 15 => 2, 0 => 3, _ => 0 };
         FillPreview.IsOn = settings.PreviewFill; MirrorPreview.IsOn = settings.PreviewMirror;
         _service.PreviewFps = settings.PreviewFps;
-        Navigation.SelectedItem = Navigation.MenuItems[0];
+        MenuSelection.SelectedIndex = 0;
         Preview.CompositionScaleChanged += (_, _) => OnPreviewSize(Preview, null!);
         _service.Changed += Refresh;
         _service.PreviewFrame = frame =>
@@ -56,11 +57,11 @@ public sealed partial class MainWindow : Window
         _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
-            _pending.Clear(); _state = null; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
+            _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
             ControlStatus.Text = state == TransportState.Connected && !_service.Connection.SupportsCameraSettings
                 ? "Update the iPhone app to use camera controls." : "Waiting for phone camera capabilities";
         });
-        _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; _confirmedId = _requestId; Adjustments.IsEnabled = false; });
+        _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = false; });
         _commands = DispatcherQueue.CreateTimer(); _commands.Interval = TimeSpan.FromMilliseconds(50);
         _commands.Tick += async (_, _) => await FlushCommands(); _commands.Start();
         AppWindow.Closing += (_, e) =>
@@ -70,6 +71,13 @@ public sealed partial class MainWindow : Window
             if (App.Settings.CloseToTray) HideToTray(); else App.Run(_app.ExitAsync);
         };
         AppWindow.Changed += (_, _) => UpdatePreviewVisibility();
+        Root.SizeChanged += (_, _) =>
+        {
+            if (_fullscreen) return;
+            bool narrow = Root.ActualWidth < 1000;
+            Navigation.DisplayMode = narrow ? SplitViewDisplayMode.Overlay : SplitViewDisplayMode.CompactInline;
+            Navigation.IsPaneOpen = !narrow;
+        };
         Root.KeyDown += (_, e) =>
         {
             if (e.Key == Windows.System.VirtualKey.F11 || (_fullscreen && e.Key == Windows.System.VirtualKey.Escape))
@@ -109,10 +117,11 @@ public sealed partial class MainWindow : Window
     }
     private void OnRendering(object? sender, object e) => _service.RenderLatestPreview();
     internal void PrepareExit() { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering; _exiting = true; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
-    private void OnNavigation(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private void OnPaneToggle(object sender, RoutedEventArgs e) => Navigation.IsPaneOpen = !Navigation.IsPaneOpen;
+    private void OnNavigation(object sender, SelectionChangedEventArgs args)
     {
         if (CameraPage is null) return;
-        var selected = (args.SelectedItem as NavigationViewItem)?.Tag as string;
+        var selected = (MenuSelection.SelectedItem as ListViewItem)?.Tag as string;
         CameraPage.Visibility = selected == "camera" ? Visibility.Visible : Visibility.Collapsed;
         AdjustmentsPage.Visibility = selected == "adjustments" ? Visibility.Visible : Visibility.Collapsed;
         PreviewPage.Visibility = selected == "preview" ? Visibility.Visible : Visibility.Collapsed;
@@ -123,16 +132,27 @@ public sealed partial class MainWindow : Window
     private async void OnToggleStream(object sender, RoutedEventArgs e) => await Invoke(_service.ToggleStreamAsync);
     private async void OnSwitchCamera(object sender, RoutedEventArgs e)
     {
-        _pending.Clear(); _state = null; Adjustments.IsEnabled = Torch.IsEnabled = false;
+        _pending.Clear(); _state = null; _switching = true; _lastSent = Stopwatch.GetTimestamp(); Adjustments.IsEnabled = Torch.IsEnabled = false;
         await Invoke(_service.SwitchCameraAsync);
     }
     private void OnAdjustment(object sender, RangeBaseValueChangedEventArgs e)
-    { if (sender is Slider slider && slider.Tag is string key) Queue(key, e.NewValue); }
+    {
+        if (sender is not Slider slider || slider.Tag is not string key) return;
+        slider.Header = key switch
+        {
+            "exposure_bias" => $"Exposure compensation · {e.NewValue:F1} EV",
+            "iso" => $"ISO · {e.NewValue:F0}", "shutter_ms" => $"Exposure duration · {e.NewValue:F2} ms",
+            "focus" => $"Manual focus · {e.NewValue:F2}", "temperature" => $"Temperature · {e.NewValue:F0} K",
+            "tint" => $"Tint · {e.NewValue:F0}", _ => slider.Header
+        };
+        Queue(key, e.NewValue);
+    }
     private void OnExposureMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_exposure", AutoExposure.IsOn ? 1 : 0); UpdateEnabled(); } }
     private void OnFocusMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_focus", AutoFocus.IsOn ? 1 : 0); UpdateEnabled(); } }
     private void OnWhiteBalanceMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_white_balance", AutoWhiteBalance.IsOn ? 1 : 0); UpdateEnabled(); } }
     private void OnTorch(object sender, RoutedEventArgs e) => Queue("torch_on", Torch.IsOn ? 1 : 0);
-    private void OnTorchLevel(object sender, RangeBaseValueChangedEventArgs e) => Queue("torch_level", e.NewValue);
+    private void OnTorchLevel(object sender, RangeBaseValueChangedEventArgs e)
+    { if (TorchLevel is not null) TorchLevel.Header = $"Torch brightness · {e.NewValue:P0}"; Queue("torch_level", e.NewValue); }
     internal void ToggleTorch() { if (_state?.TorchAvailable == true && _service.Streaming) Queue("torch_on", _state.TorchOn ? 0 : 1); }
     private void OnReset(object sender, RoutedEventArgs e) { _pending.Clear(); Queue("reset", 1); }
     private void Queue(string key, double value)
@@ -142,11 +162,13 @@ public sealed partial class MainWindow : Window
     }
     private async Task FlushCommands()
     {
+        if (_switching && Stopwatch.GetElapsedTime(_lastSent).TotalSeconds > 5)
+        { _switching = false; ControlStatus.Text = "Camera switch not confirmed. Refreshing controls…"; await Invoke(() => _service.Connection.RequestCameraStateAsync()); }
         if (_sending || !_service.Connected || _state is null) return;
         if (_pending.Count == 0)
         {
-            if (_requestId > _confirmedId && Stopwatch.GetElapsedTime(_lastSent).TotalSeconds > 5)
-            { _confirmedId = _requestId; ControlStatus.Text = "Phone did not confirm the change. Reconnecting may help."; }
+            if (_requestId > _confirmedId && _timedOutId != _requestId && Stopwatch.GetElapsedTime(_lastSent).TotalSeconds > 5)
+            { _timedOutId = _requestId; ControlStatus.Text = "Phone did not confirm the change. Reconnecting may help."; }
             return;
         }
         var request = new CameraSettings { RequestId = ++_requestId, CameraId = _state.CameraId, Values = new(_pending) };
@@ -157,6 +179,9 @@ public sealed partial class MainWindow : Window
     }
     private void ApplyState(CameraState state)
     {
+        if (_switching) return;
+        if (string.IsNullOrEmpty(state.CameraId))
+        { _state = null; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false; return; }
         _state = state;
         _updating = true;
         try
@@ -164,9 +189,9 @@ public sealed partial class MainWindow : Window
             foreach (var (key, slider) in _sliders)
             {
                 if (state.Ranges.TryGetValue(key, out var range)) { slider.Minimum = range.Min; slider.Maximum = Math.Max(range.Min, range.Max); }
-                if (_pending.Count == 0 && (state.RequestId == 0 && _requestId == _confirmedId || state.RequestId >= _requestId) && state.Values.TryGetValue(key, out var value)) slider.Value = value;
+                if (_pending.Count == 0 && (state.RequestId == 0 && (_requestId == _confirmedId || _requestId == _timedOutId) || state.RequestId >= _requestId) && state.Values.TryGetValue(key, out var value)) slider.Value = value;
             }
-            if (_pending.Count == 0 && (state.RequestId >= _requestId || _confirmedId == _requestId))
+            if (_pending.Count == 0 && (state.RequestId >= _requestId || _confirmedId == _requestId || _timedOutId == _requestId))
             {
                 AutoExposure.IsOn = state.Values.GetValueOrDefault("auto_exposure", 1) != 0;
                 AutoFocus.IsOn = state.Values.GetValueOrDefault("auto_focus", 1) != 0;
@@ -212,7 +237,6 @@ public sealed partial class MainWindow : Window
     {
         _fullscreen = !_fullscreen;
         AppWindow.SetPresenter(_fullscreen ? AppWindowPresenterKind.FullScreen : AppWindowPresenterKind.Overlapped);
-        Navigation.IsPaneVisible = !_fullscreen;
         Navigation.IsPaneOpen = !_fullscreen;
         FullscreenExit.Visibility = _fullscreen ? Visibility.Visible : Visibility.Collapsed;
     }

@@ -38,4 +38,3 @@ int main() {
     std::puts("Preview argument, NV12 range, fit/fill and mirror checks passed.");
     return 0;
 }
-

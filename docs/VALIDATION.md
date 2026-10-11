@@ -22,7 +22,7 @@ Use the Actions result to establish which of these passed for a particular commi
 - [ ] Switch front/rear repeatedly. Confirm actual reported capture dimensions, keyframe recovery, and stable output.
 - [ ] Run the rear camera at native 1920×1080 at 60 fps for at least 15 minutes. Record output rate, latency, phone temperature/thermal changes, and any stalls.
 - [ ] While streaming, unplug/reconnect ten times. Verify the old socket/capture/decoder state is discarded and the new session recovers without restarting apps.
-- [ ] Open Windows camera enumeration and a preview app. Verify **USB iPhone Camera** appears and produces frames.
+- [ ] Open Windows camera enumeration and a preview app. Verify **CamoRip** appears and produces frames.
 - [ ] Select the camera in at least one intended meeting app, e.g. Zoom or Teams; record the actual app and whether its preview/call is stable.
 - [ ] Check missing Apple driver/service, untrusted/unpaired or locked phone, unavailable phone app endpoint, unsupported IPA installer, denied camera permission, and interrupted USB. Record useful messages rather than assuming the failure cause.
 - [ ] Close both companions and uninstall Windows. Confirm no stale active camera session and no retained temporary captured frames.
@@ -82,3 +82,23 @@ Retest the new Windows installer with the existing iPhone app, then compare live
 decode/publish rates, queue drops/recoveries, stage maximum times, allocations,
 and GC counts. Physical sustained 1080p60 and meeting-client smoothness remain
 pending for v4.
+
+## CamoRip v0.2 desktop acceptance — pending physical review
+
+- [ ] Upgrade from the existing installation, close the old companion and verify one CamoRip camera without a duplicate old device.
+- [ ] Change exposure compensation, manual ISO/shutter, focus and white balance from Windows; verify acknowledged actual values and the resulting video in a meeting app.
+- [ ] Switch cameras while dragging a setting; stale commands must not apply to the newly selected camera.
+- [ ] Exercise torch toggle/brightness, unavailable front camera and thermal availability. Verify off on stop, cable pull, switch and application exit/background.
+- [ ] Select 60/30/15/off preview, fit/fill, mirror, F11/Escape and different window sizes/DPIs. Mirroring must affect only the desktop preview.
+- [ ] Minimize, close-to-tray and reopen the existing instance; webcam output must continue. Verify all tray actions and explicit Exit.
+- [ ] Toggle logging off, note the log file size, stream for 10 seconds and verify no new writes. Restart and confirm the preference; retain access to old logs.
+- [ ] Verify start minimized and optional Windows sign-in launch, keyboard navigation, screen reader labels, text scaling, high contrast and system animation/transparency settings.
+- [ ] Compare sustained 1080p60 queue drops, decode/publish/preview timings and CPU/GPU load against pipeline v4. Synthetic GPU tests are not an end-to-end phone benchmark.
+
+A local hardware-only preview smoke run (renderer from CI run 32) initialized the
+D3D11 device successfully and submitted 180 synthetic 1080p NV12 images with zero
+negative render results, averaging 1.82 ms per upload/draw/present call. This used
+an unattached composition swap chain and does not establish actual WinUI display
+rate or meeting-app performance. Native shader tests use WARP solely on hosted CI;
+the shipped renderer requests hardware and reports failure rather than silently
+calling software rendering hardware acceleration.

@@ -10,15 +10,17 @@ internal sealed class TrayIcon : IDisposable
     private readonly nint _previous;
     private const uint CallbackMessage = 0x8000 + 71;
     private NotifyIconData _data;
+    private readonly nint _icon;
     internal Action? Open, ToggleStream, ToggleTorch, Exit;
-    internal bool Streaming, Torch, TorchAvailable;
+    internal bool Connected, Streaming, Torch, TorchAvailable;
     public TrayIcon(nint window)
     {
         _window = window;
         _callback = Proc;
         _previous = SetWindowLongPtr(window, -4, Marshal.GetFunctionPointerForDelegate(_callback));
+        _icon = LoadImage(0, System.IO.Path.Combine(AppContext.BaseDirectory, "universal_cam.ico"), 1, 32, 32, 0x10);
         _data = new() { Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = window, Id = 1, Flags = 7,
-            Callback = CallbackMessage, Icon = LoadIcon(0, (nint)32512), Tip = "CamoRip" };
+            Callback = CallbackMessage, Icon = _icon != 0 ? _icon : LoadIcon(0, (nint)32512), Tip = "CamoRip" };
         Shell_NotifyIcon(0, ref _data);
     }
     private nint Proc(nint hwnd, uint message, nint w, nint l)
@@ -32,7 +34,7 @@ internal sealed class TrayIcon : IDisposable
                 try
                 {
                     AppendMenu(menu, 0, 1, "Open CamoRip");
-                    AppendMenu(menu, 0, 2, Streaming ? "Stop video" : "Start video");
+                    AppendMenu(menu, Connected ? 0u : 1u, 2, Streaming ? "Stop video" : "Start video");
                     AppendMenu(menu, TorchAvailable ? 0u : 1u, 3, Torch ? "Torch off" : "Torch on");
                     AppendMenu(menu, 0x800, 0, "");
                     AppendMenu(menu, 0, 4, "Exit");
@@ -50,7 +52,7 @@ internal sealed class TrayIcon : IDisposable
         if (message == RegisterWindowMessage("TaskbarCreated")) Shell_NotifyIcon(0, ref _data);
         return CallWindowProc(_previous, hwnd, message, w, l);
     }
-    public void Dispose() { Shell_NotifyIcon(2, ref _data); SetWindowLongPtr(_window, -4, _previous); }
+    public void Dispose() { Shell_NotifyIcon(2, ref _data); SetWindowLongPtr(_window, -4, _previous); if (_icon != 0) DestroyIcon(_icon); }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct NotifyIconData
     {
@@ -67,6 +69,8 @@ internal sealed class TrayIcon : IDisposable
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] private static extern bool Shell_NotifyIcon(uint message, ref NotifyIconData data);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint CallWindowProc(nint proc, nint hwnd, uint msg, nint w, nint l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint LoadImage(nint instance, string path, uint type, int width, int height, uint flags);
+    [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);
     [DllImport("user32.dll")] private static extern nint LoadIcon(nint instance, nint id);
     [DllImport("user32.dll")] private static extern nint CreatePopupMenu();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool AppendMenu(nint menu, uint flags, nuint id, string text);

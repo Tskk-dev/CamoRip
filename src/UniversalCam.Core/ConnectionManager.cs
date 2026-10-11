@@ -88,7 +88,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     public Task ListCamerasAsync(CancellationToken ct = default) => SendAsync(new ListCameras(), ct);
     public Task SwitchCameraAsync(string? cameraId, CancellationToken ct = default) =>
         SendAsync(new SwitchCamera { CameraId = cameraId }, ct);
-    public Task RequestCameraStateAsync(CancellationToken ct = default) => SendAsync(new GetCameraState(), ct);
+    public Task RequestCameraStateAsync(CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(new GetCameraState(), ct) : Task.CompletedTask;
     public Task SetCameraSettingsAsync(CameraSettings settings, CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(settings, ct) : Task.CompletedTask;
     public Task PingAsync(CancellationToken ct = default) =>
         SendAsync(new Ping { Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, ct);
@@ -252,7 +252,8 @@ public sealed class ConnectionManager : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
-        try { await StopStreamAsync(); }
+        using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try { await StopStreamAsync(stopTimeout.Token); }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
         _disposed = true;
         await _usb.DisposeAsync();

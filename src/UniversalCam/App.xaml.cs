@@ -36,7 +36,7 @@ public partial class App : Application
             Open = ShowWindow, ToggleStream = () => Run(Service.ToggleStreamAsync),
             ToggleTorch = () => _window.ToggleTorch(), Exit = () => Run(ExitAsync)
         };
-        Service.Changed += () => { _tray.Streaming = Service.Streaming; };
+        Service.Changed += () => { _tray.Connected = Service.Connected; _tray.Streaming = Service.Streaming; if (!Service.Streaming) _tray.TorchAvailable = false; };
         Service.Connection.CameraStateReceived += (_, state) => Ui(() =>
         { _tray.Torch = state.TorchOn; _tray.TorchAvailable = state.TorchAvailable && Service.Streaming; });
         Service.Connection.StateChanged += (_, _) => Ui(() => { if (!Service.Connected) _tray.TorchAvailable = _tray.Torch = false; });
@@ -51,7 +51,7 @@ public partial class App : Application
         if (_exiting) return;
         _exiting = true;
         if (_window is not null) _window.PrepareExit();
-        await Service.DisposeAsync();
+        try { await Service.DisposeAsync(); } catch (Exception ex) { Log(ex); }
         _tray?.Dispose();
         _activationWait?.Unregister(null);
         _activate?.Dispose();
