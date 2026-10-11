@@ -4,6 +4,10 @@ using UniversalCam.VirtualCamera;
 
 namespace UniversalCam.Tests;
 
+[CollectionDefinition("Decoder integration", DisableParallelization = true)]
+public sealed class DecoderIntegrationCollection { }
+
+[Collection("Decoder integration")]
 public class VideoSchedulingTests
 {
     [Fact]
