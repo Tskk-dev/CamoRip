@@ -48,6 +48,27 @@ public class H264DecoderTests
         Assert.True(count > before);
     }
 
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(50, 50)]
+    public void Feed_CroppedSps_ReturnsDisplaySizeAndPackedNv12WithoutMacroblockPadding(int width, int height)
+    {
+        using var decoder = new H264Decoder();
+        var frames = new List<DecodedFrame>();
+        decoder.FrameDecoded += (_, frame) => frames.Add(frame);
+        var bitstream = BlackIdrFixture.Create(width, height);
+        for (var index = 0; index < 3; index++) decoder.Feed(Video(bitstream, timestamp: 1_000_000 + index * 16_667));
+        Assert.NotEmpty(frames);
+        Assert.All(frames, frame =>
+        {
+            Assert.Equal(width, frame.Width);
+            Assert.Equal(height, frame.Height);
+            Assert.Equal(width * height * 3 / 2, frame.Data.Length);
+            Assert.All(frame.Data.Take(width * height), value => Assert.InRange(value, (byte)15, (byte)17));
+            Assert.All(frame.Data.Skip(width * height), value => Assert.InRange(value, (byte)127, (byte)129));
+        });
+    }
+
     [Fact]
     public void Feed_AudioOrEmptyVideo_DoesNotInitializeNativeDecoder()
     {
@@ -75,14 +96,22 @@ public class H264DecoderTests
 /// </summary>
 internal static class BlackIdrFixture
 {
-    public static byte[] Create()
+    public static byte[] Create(int width = 64, int height = 64)
     {
+        int columns = (width + 15) / 16, rows = (height + 15) / 16;
+        int cropRight = (columns * 16 - width) / 2, cropBottom = (rows * 16 - height) / 2;
         var sps = new Bits();
-        sps.Fixed(66, 8); sps.Fixed(0xC0, 8); sps.Fixed(30, 8); // constrained baseline, level3
+        sps.Fixed(66, 8); sps.Fixed(0xC0, 8); sps.Fixed(width > 64 ? 42u : 30u, 8);
         sps.Ue(0); sps.Ue(0); sps.Ue(2); // SPS0, frame_num4bits, POC type2
         sps.Ue(1); sps.Fixed(0, 1); // one reference, no gaps
-        sps.Ue(3); sps.Ue(3); // 4×4 macroblocks
-        sps.Fixed(1, 1); sps.Fixed(1, 1); sps.Fixed(0, 1); sps.Fixed(0, 1); // progressive, direct8x8, no crop/VUI
+        sps.Ue((uint)(columns - 1)); sps.Ue((uint)(rows - 1));
+        sps.Fixed(1, 1); sps.Fixed(1, 1); sps.Fixed(0, 1); // progressive, direct8x8
+        sps.Fixed(cropRight != 0 || cropBottom != 0 ? 1u : 0u, 1);
+        if (cropRight != 0 || cropBottom != 0)
+        {
+            sps.Ue(0); sps.Ue((uint)cropRight); sps.Ue(0); sps.Ue((uint)cropBottom);
+        }
+        sps.Fixed(0, 1); // no VUI
 
         var pps = new Bits();
         pps.Ue(0); pps.Ue(0); pps.Fixed(0, 1); pps.Fixed(0, 1); // PPS/SPS0, CAVLC
@@ -96,7 +125,7 @@ internal static class BlackIdrFixture
         slice.Fixed(0, 4); slice.Ue(0); // frame_num0, idr_pic_id0
         slice.Fixed(0, 1); slice.Fixed(0, 1); // IDR reference marking
         slice.Ue(0); slice.Ue(1); // signed-zero QP delta; disable deblocking
-        for (var macroblock = 0; macroblock < 16; macroblock++)
+        for (var macroblock = 0; macroblock < columns * rows; macroblock++)
         {
             slice.Ue(25); // I_PCM macroblock in an I slice
             slice.Align();
