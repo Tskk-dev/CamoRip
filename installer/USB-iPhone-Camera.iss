@@ -12,6 +12,7 @@ AppVersion={#AppVersion}
 AppPublisher=Tskk-dev
 DefaultDirName={autopf}\CamoRip
 DefaultGroupName=CamoRip
+UsePreviousGroup=no
 UninstallDisplayIcon={app}\CamoRip.exe
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
