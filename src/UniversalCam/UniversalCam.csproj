@@ -10,7 +10,7 @@
         <PlatformTarget>x64</PlatformTarget>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <AssemblyName>CamoRip</AssemblyName>
-        <Version>0.2.0</Version>
+        <Version>0.2.1</Version>
 
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
@@ -48,4 +48,21 @@
               Link="UCamMediaSource.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
               Condition="Exists('..\..\artifacts\native\$(Configuration)\UCamMediaSource.dll')" />
     </ItemGroup>
+    <!-- Unpackaged WinUI publish currently omits the application's PRI/XBF files.
+         Include generated output explicitly, preserving relative XAML paths. -->
+    <Target Name="PublishWinUIResources" AfterTargets="ComputeFilesToPublish">
+        <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pri')" Text="Application PRI was not generated." />
+        <Error Condition="!Exists('$(TargetDir)Views\MainWindow.xbf')" Text="Compiled window XAML was not generated." />
+        <ItemGroup>
+            <ResolvedFileToPublish Include="$(TargetDir)$(AssemblyName).pri">
+                <RelativePath>$(AssemblyName).pri</RelativePath>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </ResolvedFileToPublish>
+            <_ApplicationXbf Include="$(TargetDir)**\*.xbf" />
+            <ResolvedFileToPublish Include="@(_ApplicationXbf)">
+                <RelativePath>%(_ApplicationXbf.RecursiveDir)%(_ApplicationXbf.Filename)%(_ApplicationXbf.Extension)</RelativePath>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </ResolvedFileToPublish>
+        </ItemGroup>
+    </Target>
 </Project>

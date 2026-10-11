@@ -85,6 +85,33 @@ pending for v4.
 
 ## CamoRip v0.2 desktop acceptance — pending physical review
 
+### 0.2.1 startup and USB regression (2026-10-12)
+
+The installed 0.2.0 build failed in `MainWindow.InitializeComponent` with a
+`XamlParseException` before starting USB. Its publish/installer directory lacked
+`CamoRip.pri`, `App.xbf` and `Views/MainWindow.xbf`, although normal build output
+contained them. Reproducing the workflow's self-contained publish locally showed
+the same omission. The project now explicitly publishes its generated PRI/XBF
+files. The Windows build also launches the published executable with
+`--startup-check` and requires a successful exit and resource-load marker before
+building the installer. This check isolates settings, starts no USB connection,
+and does not inspect visual design.
+
+On this PC, the corrected self-contained publish passed the startup check with
+exit code 0. Windows reported the Apple iPhone USB devices present and the Apple
+usbmux service returned one USB device. Launching the corrected executable in
+normal mode connected to the actual phone, negotiated 1920x1080 at 60 fps and
+started video. Initial log samples confirmed D3D11 hardware decode on AMD Radeon
+RX Vega 10, 1920x1080 output, approximately 60 fps publication and no queue drops.
+Later rates varied; these initial samples do not establish sustained 60 fps or
+meeting-app behavior. Camera adjustments, torch lifecycle, tray continuity and
+upgrade registration still require their respective checks below.
+
+The previous visible window was an isolated `--prototype` instance, which does
+not start USB. Prototype mode now shows an explicit USB-disabled notice, and
+startup logs identify the executable, version and mode. The user waived further
+UI validation; visual/accessibility checks below are no longer acceptance gates.
+
 - [ ] Upgrade from the existing installation, close the old companion and verify one CamoRip camera without a duplicate old device.
 - [ ] Change exposure compensation, manual ISO/shutter, focus and white balance from Windows; verify acknowledged actual values and the resulting video in a meeting app.
 - [ ] Switch cameras while dragging a setting; stale commands must not apply to the newly selected camera.

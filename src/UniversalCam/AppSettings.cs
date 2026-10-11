@@ -7,8 +7,10 @@ namespace UniversalCam;
 internal sealed class AppSettings
 {
     // Keep the established location so upgrades preserve logs and preferences.
-    internal static readonly string DirectoryPath = Environment.GetCommandLineArgs().Contains("--prototype")
-        ? Path.Combine(AppContext.BaseDirectory, "prototype-data")
+    internal static readonly bool StartupCheck = Environment.GetCommandLineArgs().Contains("--startup-check");
+    internal static readonly bool Isolated = StartupCheck || Environment.GetCommandLineArgs().Contains("--prototype");
+    internal static readonly string DirectoryPath = Isolated
+        ? Path.Combine(AppContext.BaseDirectory, StartupCheck ? "startup-check-data" : "prototype-data")
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalCam");
     private string _storageDirectory = DirectoryPath;
     private string FilePath => Path.Combine(_storageDirectory, "settings.json");

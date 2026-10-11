@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.2.1"
 #endif
 #ifndef PublishDir
   #define PublishDir "..\artifacts\windows"
@@ -29,7 +29,7 @@ RestartApplications=no
 LicenseFile=..\LICENSE
 
 [Files]
-Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "UCamMediaSource.dll"
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "UCamMediaSource.dll,startup-check-data\*"
 Source: "{#PublishDir}\UCamMediaSource.dll"; DestDir: "{app}"; Flags: ignoreversion regserver
 
 [Icons]

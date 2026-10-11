@@ -88,6 +88,12 @@ public sealed partial class MainWindow : Window
             { OnFullscreen(Root, new RoutedEventArgs()); e.Handled = true; }
         };
         _ready = true;
+        if (AppSettings.Isolated && !AppSettings.StartupCheck)
+        {
+            ConnectionNotice.Severity = InfoBarSeverity.Informational;
+            ConnectionNotice.Message = "Prototype mode: USB is disabled. Open the installed CamoRip app to connect your iPhone.";
+            ConnectionNotice.IsOpen = true;
+        }
     }
     private void Refresh()
     {
