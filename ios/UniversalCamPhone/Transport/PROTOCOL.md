@@ -37,8 +37,9 @@ Windows -> phone: {"type":"start_stream"}
 phone -> Windows: video packets
 ```
 
-`configure_ack` contains the **actual** capture dimensions. It may be 1280x720
-when a front camera cannot supply the requested size/rate. Windows must honor a new acknowledgement
+`configure_ack` contains the **actual** capture dimensions and frame rate, which
+may be lower than requested. It may be 1280x720 when a front camera cannot supply
+the requested format. Windows must honor a new acknowledgement
 after `switch_camera`, including while a stream is active. Supported requests:
 H.264, width 640–1920, height 360–1080, 15–60 fps, bitrate 0.5–20 Mbps. Capture
 chooses the largest supported 16:9 format within requested dimensions.
