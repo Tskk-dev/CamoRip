@@ -45,6 +45,8 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSCameraUsageDescription: "UniversalCam uses your camera to stream video to your Windows PC."
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

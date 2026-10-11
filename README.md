@@ -23,6 +23,17 @@ The main target is rear camera 1920×1080 at 60 fps. The app reports the actual 
 
 See [installation details](docs/INSTALLATION.md), [architecture](docs/ARCHITECTURE.md), [upstream audit](docs/UPSTREAM_AUDIT.md), and the [device validation checklist](docs/VALIDATION.md).
 
+## Slow video diagnostics
+
+Leave streaming for 10 seconds and compare the iPhone stage counts in
+`Files > On My iPhone > UniversalCam > UniversalCam.log` with the Windows
+`Pipeline fps` line. The Windows log is at
+`%LOCALAPPDATA%\UniversalCam\Logs\latest.log`; use **Open diagnostic logs** in
+the companion window to open its folder. `captured` versus `encoded` identifies
+phone capture/encoder loss, `encoded` versus `usbSent` identifies USB send
+backpressure, and Windows `USB` versus `decoded` versus `virtual camera` narrows
+down the PC-side stage. Include both logs when reporting a stall.
+
 ## Build
 
 Windows needs Visual Studio 2022 C++ tools, a Windows 11 SDK, CMake, .NET SDK 8 or newer, and Inno Setup 6 for installer packaging. From a Developer PowerShell:

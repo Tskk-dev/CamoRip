@@ -24,6 +24,10 @@ struct ContentView: View {
                     Spacer()
                     VStack(spacing: 10) {
                         Text(connection.formatLabel).font(.headline)
+                        if connection.state == .streaming {
+                            Text("Diagnostics: Files › On My iPhone › UniversalCam › UniversalCam.log")
+                                .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        }
                         Text(hint).font(.callout).multilineTextAlignment(.center)
                         if connection.state == .streaming && connection.latencyMs > 0 {
                             Text("USB latency: \(connection.latencyMs) ms").font(.caption)

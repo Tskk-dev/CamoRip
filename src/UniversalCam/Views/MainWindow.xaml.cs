@@ -31,12 +31,16 @@ public partial class MainWindow : Window
     private long _lastPreviewTicks;
     private long _generation;
     private long _decodingGeneration;
+    private readonly System.Windows.Threading.DispatcherTimer _metricsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private long _receivedFrames, _decodedFrames, _cameraFrames, _queueDrops;
+    private long _lastMetricsTicks, _lastReceivedFrames, _lastDecodedFrames, _lastCameraFrames, _lastQueueDrops;
 
     public MainWindow()
     {
         InitializeComponent();
         Loaded += OnLoaded;
         Closing += OnClosing;
+        _metricsTimer.Tick += (_, _) => WriteMetrics();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -46,6 +50,7 @@ public partial class MainWindow : Window
             _camera = new VirtualCameraSession();
             _camera.StatusChanged += (_, status) => Ui(() => CameraStatus.Text = status);
             CameraStatus.Text = _camera.StatusMessage;
+            App.Log("INFO", $"Virtual camera status: {_camera.StatusMessage}");
         }
         catch (Exception ex)
         {
@@ -56,13 +61,23 @@ public partial class MainWindow : Window
         _decoder.FrameDecoded += (_, frame) =>
         {
             if (_closing || !_connection.IsStreaming || Interlocked.Read(ref _decodingGeneration) != Interlocked.Read(ref _generation)) return;
-            try { _camera?.OnFrameDecoded(this, frame); }
+            Interlocked.Increment(ref _decodedFrames);
+            try
+            {
+                if (_camera?.IsAvailable == true)
+                {
+                    _camera.OnFrameDecoded(this, frame);
+                    Interlocked.Increment(ref _cameraFrames);
+                }
+            }
             catch (Exception ex) { Ui(() => CameraStatus.Text = $"Windows webcam: {ex.Message}"); App.Log(ex); }
             RenderPreview(frame);
         };
         _connection.Diagnostic += (_, message) => Ui(() => Diagnostic.Text = message);
+        _connection.Diagnostic += (_, message) => App.Log("INFO", $"Connection: {message}");
         _connection.ConfigurationAcknowledged += (_, configuration) => Ui(() =>
             VideoStatus.Text = $"Capture: {configuration.Resolution} at {configuration.Fps} fps · Webcam: 1080p60");
+        _connection.ConfigurationAcknowledged += (_, configuration) => App.Log("INFO", $"Capture configured: {configuration.Resolution} at {configuration.Fps} fps.");
         _connection.StreamStateChanged += (_, streaming) =>
         {
             if (!streaming) Interlocked.Increment(ref _generation);
@@ -78,9 +93,14 @@ public partial class MainWindow : Window
         _connection.FrameReceived += (_, frame) =>
         {
             if (!frame.IsVideo || _closing) return;
+            Interlocked.Increment(ref _receivedFrames);
             if (!_frames.Writer.TryWrite((frame, Interlocked.Read(ref _generation))))
+            {
+                Interlocked.Increment(ref _queueDrops);
                 Interlocked.Increment(ref _generation);
+            }
         };
+        _metricsTimer.Start();
         _decodeTask = Task.Run(DecodeFrames);
         try { await _connection.StartAsync(); }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
@@ -142,6 +162,39 @@ public partial class MainWindow : Window
                 App.Log(ex);
             }
         }
+    }
+
+    private void WriteMetrics()
+    {
+        if (!_connection.IsStreaming) return;
+        var now = Stopwatch.GetTimestamp();
+        var previous = Interlocked.Exchange(ref _lastMetricsTicks, now);
+        if (previous == 0) return;
+        var seconds = Stopwatch.GetElapsedTime(previous, now).TotalSeconds;
+        var received = Interlocked.Read(ref _receivedFrames);
+        var decoded = Interlocked.Read(ref _decodedFrames);
+        var camera = Interlocked.Read(ref _cameraFrames);
+        var drops = Interlocked.Read(ref _queueDrops);
+        var receivedFps = (received - Interlocked.Exchange(ref _lastReceivedFrames, received)) / seconds;
+        var decodedFps = (decoded - Interlocked.Exchange(ref _lastDecodedFrames, decoded)) / seconds;
+        var cameraFps = (camera - Interlocked.Exchange(ref _lastCameraFrames, camera)) / seconds;
+        var newDrops = drops - Interlocked.Exchange(ref _lastQueueDrops, drops);
+        var message = $"Pipeline fps: USB {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · queue drops {newDrops}";
+        PerformanceStatus.Text = message;
+        App.Log("METRIC", message);
+    }
+
+    private void OnOpenLogs(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = App.LogDirectory,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex) { App.Log(ex); Diagnostic.Text = $"Could not open logs: {ex.Message}"; }
     }
 
     private void RenderPreview(DecodedFrame frame)
@@ -215,6 +268,7 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (_closing) return;
         _closing = true;
+        _metricsTimer.Stop();
         IsEnabled = false;
         _frames.Writer.TryComplete();
         try { await _connection.DisposeAsync(); }
@@ -232,4 +286,3 @@ public partial class MainWindow : Window
         Dispatcher.InvokeAsync(() => { if (!_closed) action(); });
     }
 }
-
