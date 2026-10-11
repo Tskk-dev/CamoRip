@@ -4,9 +4,7 @@
 implements an activatable `IMFMediaSourceEx`, one `IMFMediaStream2`, event queues,
 capture stream and legacy sensor profile attributes, pipeline sample allocator
 support, sample request tokens, timestamps and stream start/stop/shutdown.
-The output type is NV12 at the negotiated capture dimensions and rate (720p30/60, 1080p30/60 or 4K30). Each source advertises its selected mode; changing mode creates a fresh channel and restarts registration. The companion scales
-and letterboxes camera frames into this type so switching front/rear cameras
-does not change the webcam's advertised media type.
+The output type is NV12 at the negotiated capture dimensions and rate (720p30/60, 1080p30/60 or 4K30). Each source advertises its selected mode; changing mode creates a fresh channel and restarts registration. Native-sized decoded frames are copied directly. A defensive fit/letterbox path handles a mismatched frame; camera switches follow the new acknowledged mode.
 
 The native class factory returns `IMFActivate`, as required by the Windows
 virtual camera pipeline. `MFCreateVirtualCamera` receives its registered CLSID
@@ -24,7 +22,7 @@ ctest --test-dir artifacts/native -C Release --output-on-failure
 
 `ProviderSmokeTest.exe` loads the DLL directly without registering a camera or
 writing COM registry entries. It verifies source activation and helper release,
-explicit activation shutdown and reactivation, one NV12 1080p60
+explicit activation shutdown and reactivation, all five selected NV12 modes
 stream, real pixels through the frame channel, 24 requests with alternating
 null/non-null tokens across allocator reuse, monotonic sample timestamps,
 the placeholder after the writer closes, stop/restart and shutdown. Windows runners need

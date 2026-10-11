@@ -41,7 +41,7 @@ https://developer.apple.com/help/account/basics/about-your-developer-account
    through Apple's USB multiplexing service.
 5. Use Start/Stop on either device. Switch selects the other physical camera.
 
-The rear camera targets 1920×1080 at 60 fps. Camera configuration reports its
+The default is 1920×1080 at 60 fps. Windows can select supported 720p30/60, 1080p30/60 or 4K30 modes; capability lists come from the active AVFoundation device. Camera configuration reports its
 actual dimensions in `configure_ack`; the front camera on this phone may use
 1280×720. The Windows virtual camera can scale that to its advertised output.
 Switching camera restarts H.264 with an IDR frame and SPS/PPS.
@@ -84,7 +84,7 @@ brightness. Both settings persist. Minimum brightness is not screen lock or a
 backlight-off mode; keep the app in the foreground. The iPhone 6s Plus LCD still
 uses its backlight at minimum brightness.
 
-Capture remains 1080p60; no thermal FPS reduction is applied. Encoded contiguous
+Capture follows the selected/acknowledged mode; no automatic thermal FPS reduction is applied. Encoded contiguous
 AVCC buffers are read directly into one preallocated Annex B packet, retaining
 a copy fallback for noncontiguous Core Media storage. USB packets reserve their
 final size. These remove avoidable copies; actual heat/fps benefits need a

@@ -132,9 +132,9 @@ calling software rendering hardware acceleration.
 
 ## 0.3.0 resolution selector and Windows torch investigation
 
-- Local managed tests: 104 passed, 0 failed (including 4K catalog, wire round trip,
+- Local managed tests: 107 passed, 0 failed (including 4K catalog, wire round trip,
   saved capture preference, invalid control ranges, live reconfiguration restart,
-  and ignoring a superseded configuration acknowledgement).
+  ignoring a superseded configuration acknowledgement, and preview cadence on 60/75/120 Hz clocks).
 - Local WinUI self-contained publish succeeded. CI checks all five native source
   modes, selected mode byte lengths/timing, and channel cache resizing.
 - Windows Event Log contains two 0.2.1 crashes in ucrtbase.dll with 0xc0000409,
@@ -149,3 +149,9 @@ calling software rendering hardware acceleration.
 - New IPA installation, sustained 4K30 USB, physical mode changes, torch crash
   reproduction after changes and meeting-app format reopening remain unverified.
 - User waived visual UI validation; no visual inspection is required.
+
+Native checks at revision cd9eb828c8d4b30d37b73b2691e5fd8279ba3d34 passed on
+GitHub run 41: shader checks, all five source modes (provider smoke), and frame
+channel mode/cache checks. The iOS arm64 build, unsigned packaging and 11
+simulator tests passed. Its Windows job was superseded during managed build by
+the preview cadence commit; it is not a complete installer result.
