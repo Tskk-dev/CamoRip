@@ -35,8 +35,8 @@ backpressure, and Windows `USB` versus `decoded` versus `virtual camera` narrows
 down the PC-side stage. Include both logs when reporting a stall.
 
 Windows also logs `stage avg/max(count)` in milliseconds for decoder Feed,
-camera-channel writes, and preview conversion. At 60 fps, a stage consistently
-taking more than 16.7 ms cannot keep up. Camera and preview have independent
+camera-channel writes, and preview conversion. At 60 fps, decoding or publishing
+consistently taking more than 16.7 ms cannot keep up. Camera and preview have independent
 workers with one latest decoded frame each; coalesced preview frames are expected
 because the preview runs at about 15 fps. `virtual camera` counts successful
 channel writes, not frames consumed by a meeting app.
@@ -52,7 +52,8 @@ require reinstalling the phone app.
 The decoder honors the Media Foundation display aperture: a padded 1920x1088
 H.264 surface is copied as its valid 1920x1080 image, including the correct UV
 plane offset. This keeps normal 1080p publishing on the NV12 passthrough path
-instead of running a full-frame scalar resize.
+instead of running a full-frame scalar resize. A bounded SPS parser supplies
+the crop when Windows omits the aperture metadata.
 
 ## Build
 
