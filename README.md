@@ -41,13 +41,20 @@ workers with one latest decoded frame each; coalesced preview frames are expecte
 because the preview runs at about 15 fps. `virtual camera` counts successful
 channel writes, not frames consumed by a meeting app.
 
-The compressed queue is limited to 32 frames, 16 MiB and 250 ms of queued age.
+The compressed queue is limited to 64 frames, 16 MiB and 500 ms of queued age.
 An overflow discards the broken H.264 dependency chain once and waits for a fresh
 keyframe; `recoveries`, `waitingIDR`, queue age, last-frame ages and CPU/memory
 help identify the cause. Metrics run independently of the UI. Restarting the
 companion preserves the preceding run as `previous.log`; unhandled managed
 exceptions and normal shutdowns are logged too. PC pipeline changes do not
 require reinstalling the phone app.
+
+The camera source caches the last complete frame and repeats it during shared
+buffer collisions or brief decoder recovery, for up to 2.5 seconds. It never
+returns a partial copy after a collision. Explicit stop/disconnect publishes the
+neutral frame immediately, and closing the publisher invalidates the cache.
+The queue limits absorb brief bursts without deliberately delaying playback;
+they cannot compensate for sustained decoding slower than the capture rate.
 
 The decoder honors the Media Foundation display aperture: a padded 1920x1088
 H.264 surface is copied as its valid 1920x1080 image, including the correct UV
