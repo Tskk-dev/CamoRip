@@ -1,0 +1,114 @@
+import SwiftUI
+import AVFoundation
+
+struct ContentView: View {
+    @EnvironmentObject var connection: ConnectionManager
+    @EnvironmentObject var camera: CameraSession
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var cameraAuthorized = false
+    @State private var permissionChecked = false
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if cameraAuthorized {
+                CameraPreviewView(session: camera.captureSession).ignoresSafeArea()
+                VStack(spacing: 16) {
+                    HStack {
+                        Label(status, systemImage: connection.state == .streaming ? "video.fill" : "cable.connector")
+                            .font(.callout.weight(.semibold))
+                            .padding(12)
+                            .background(.ultraThinMaterial, in: Capsule())
+                        Spacer()
+                    }
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Text(connection.formatLabel).font(.headline)
+                        Text(hint).font(.callout).multilineTextAlignment(.center)
+                        if connection.state == .streaming && connection.latencyMs > 0 {
+                            Text("USB latency: \(connection.latencyMs) ms").font(.caption)
+                        }
+                        HStack(spacing: 16) {
+                            Button {
+                                if connection.wantsStreaming { connection.stopStreaming() }
+                                else { connection.startStreaming() }
+                            } label: {
+                                Label(connection.wantsStreaming ? "Stop" : "Start",
+                                    systemImage: connection.wantsStreaming ? "stop.fill" : "play.fill")
+                                    .frame(minWidth: 100)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(connection.activeTransport == nil)
+
+                            Button { connection.switchCamera() } label: {
+                                Label("Switch", systemImage: "arrow.triangle.2.circlepath.camera")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!camera.isRunning || camera.availableCameras.count < 2)
+                        }
+                        if case .error = connection.state {
+                            Button("Retry USB connection") {
+                                camera.start()
+                                connection.disconnect()
+                                connection.startDiscovery()
+                            }.buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                }
+                .foregroundStyle(.white)
+                .padding()
+            } else if permissionChecked {
+                VStack(spacing: 20) {
+                    Image(systemName: "camera.fill").font(.system(size: 48))
+                    Text("Camera access required").font(.title2.bold())
+                    Text("Allow Camera access in Settings to send video to your Windows PC.")
+                        .multilineTextAlignment(.center)
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }.buttonStyle(.borderedProminent)
+                }
+                .foregroundStyle(.white)
+                .padding(32)
+            } else { ProgressView().tint(.white) }
+        }
+        .task { await checkPermission() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { Task { await checkPermission() } }
+        }
+    }
+
+    private var status: String {
+        switch connection.state {
+        case .idle, .discovering: return "Waiting for USB"
+        case .connected: return "USB connected"
+        case .streaming: return "Streaming over USB"
+        case .error: return "Connection needs attention"
+        }
+    }
+
+    private var hint: String {
+        switch connection.state {
+        case .idle, .discovering:
+            return "Connect the cable, unlock and trust this PC, then open UniversalCam on Windows."
+        case .connected:
+            return "Ready. Keep this app open and hold the phone sideways."
+        case .streaming:
+            return "Keep this app open. The screen stays awake while streaming."
+        case .error(let message): return message
+        }
+    }
+
+    @MainActor private func checkPermission() async {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        let granted: Bool
+        if status == .notDetermined { granted = await AVCaptureDevice.requestAccess(for: .video) }
+        else { granted = status == .authorized }
+        cameraAuthorized = granted
+        permissionChecked = true
+        if granted { camera.start(); connection.startDiscovery() }
+        else { connection.stopStreaming(); camera.stop() }
+    }
+}

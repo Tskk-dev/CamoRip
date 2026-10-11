@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "UniversalCam (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "UniversalCam (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

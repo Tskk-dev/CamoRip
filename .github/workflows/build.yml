@@ -1,0 +1,81 @@
+name: Build webcam apps
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webcam-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.419
+      - name: Build native components, test, and publish
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $compiler = 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE) { throw 'Could not install Inno Setup.' }
+          }
+          & $compiler installer/USB-iPhone-Camera.iss
+          if ($LASTEXITCODE) { throw 'Installer compilation failed.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: usb-iphone-camera-windows-x64
+          path: artifacts/installer/*.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-results
+          path: artifacts/tests/*.trx
+          if-no-files-found: ignore
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build unsigned iOS 15 app
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project UniversalCamPhone.xcodeproj \
+            -scheme UniversalCamPhone -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath ../artifacts/ios \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package and check unsigned IPA
+        run: |
+          set -euo pipefail
+          APP=artifacts/ios/Build/Products/Release-iphoneos/UniversalCam.app
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '15.0'
+          xcrun lipo -verify_arch arm64 "$APP/UniversalCam"
+          mkdir -p artifacts/ipa/Payload
+          cp -R "$APP" artifacts/ipa/Payload/
+          (cd artifacts/ipa && zip -qr ../USB-iPhone-Camera-ios15-unsigned.ipa Payload)
+          unzip -t artifacts/USB-iPhone-Camera-ios15-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: usb-iphone-camera-ios-unsigned
+          path: artifacts/USB-iPhone-Camera-ios15-unsigned.ipa
+          if-no-files-found: error

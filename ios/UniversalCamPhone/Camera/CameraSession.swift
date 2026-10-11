@@ -1,0 +1,253 @@
+import AVFoundation
+import Combine
+
+struct CameraInfo: Codable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let position: String
+    let type: String
+    let zoomFactor: Double
+    enum CodingKeys: String, CodingKey {
+        case id, name, position, type
+        case zoomFactor = "zoom_factor"
+    }
+}
+
+struct CaptureConfiguration: Equatable {
+    let width: Int32
+    let height: Int32
+    let fps: Int32
+    var resolution: String { "\(width)x\(height)" }
+}
+
+/// All capture configuration and frame callbacks run on sessionQueue. UI updates
+/// and completions are delivered on main. A 6s Plus uses its rear camera for
+/// 1080p30; its front camera negotiates the resolution it actually supports.
+final class CameraSession: NSObject, ObservableObject {
+    @Published private(set) var isRunning = false
+    @Published private(set) var currentCameraID = ""
+    @Published private(set) var availableCameras: [CameraInfo] = []
+    @Published private(set) var configuration: CaptureConfiguration?
+    let captureSession = AVCaptureSession()
+    var onVideoSampleBuffer: ((CMSampleBuffer) -> Void)?
+    var onError: ((String) -> Void)?
+
+    private let sessionQueue = DispatchQueue(label: "com.universalcam.camera.session", qos: .userInteractive)
+    private let videoOutput = AVCaptureVideoDataOutput()
+    private var configured = false
+    private var requestedWidth: Int32 = 1920
+    private var requestedHeight: Int32 = 1080
+    private var requestedFPS: Int32 = 30
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(runtimeError(_:)),
+            name: .AVCaptureSessionRuntimeError, object: captureSession)
+        NotificationCenter.default.addObserver(self, selector: #selector(interrupted(_:)),
+            name: .AVCaptureSessionWasInterrupted, object: captureSession)
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    func start() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+                self.report("Camera permission is denied. Enable Camera in Settings.")
+                return
+            }
+            do {
+                if !self.configured { try self.setUp() }
+                if !self.captureSession.isRunning { self.captureSession.startRunning() }
+                let running = self.captureSession.isRunning
+                DispatchQueue.main.async { self.isRunning = running }
+                if !running { self.report("The camera could not start. Close other camera apps and retry.") }
+            } catch { self.report(error.localizedDescription) }
+        }
+    }
+
+    func stop() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if self.captureSession.isRunning { self.captureSession.stopRunning() }
+            DispatchQueue.main.async { self.isRunning = false }
+        }
+    }
+
+    func configure(width: Int32, height: Int32, fps: Int32,
+                   completion: @escaping (Result<CaptureConfiguration, Error>) -> Void) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                if !self.configured { try self.setUp() }
+                self.requestedWidth = width
+                self.requestedHeight = height
+                self.requestedFPS = fps
+                guard let device = self.currentDevice else { throw self.failure("No camera is available.") }
+                self.captureSession.beginConfiguration()
+                let result: Result<CaptureConfiguration, Error>
+                do { result = .success(try self.applyFormat(to: device)) }
+                catch { result = .failure(error) }
+                self.captureSession.commitConfiguration()
+                self.setOutputOrientation()
+                DispatchQueue.main.async {
+                    if case .success(let config) = result { self.configuration = config }
+                    completion(result)
+                }
+            } catch { DispatchQueue.main.async { completion(.failure(error)) } }
+        }
+    }
+
+    func switchCamera(completion: ((CameraInfo?) -> Void)? = nil) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            let position: AVCaptureDevice.Position = self.currentDevice?.position == .back ? .front : .back
+            guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
+                DispatchQueue.main.async { completion?(nil) }; return
+            }
+            self.changeCamera(to: device, completion: completion)
+        }
+    }
+
+    func switchToCamera(withID id: String, completion: ((CameraInfo?) -> Void)? = nil) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard let device = AVCaptureDevice(uniqueID: id), device.hasMediaType(.video) else {
+                DispatchQueue.main.async { completion?(nil) }; return
+            }
+            self.changeCamera(to: device, completion: completion)
+        }
+    }
+
+    private var currentDevice: AVCaptureDevice? {
+        captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first?.device
+    }
+
+    private func setUp() throws {
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+            throw failure("Camera permission is denied. Enable Camera in Settings.")
+        }
+        let cameras = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera],
+            mediaType: .video, position: .unspecified).devices
+        guard let device = cameras.first(where: { $0.position == .back }) ?? cameras.first else {
+            throw failure("No camera is available.")
+        }
+        let input = try AVCaptureDeviceInput(device: device)
+        captureSession.beginConfiguration()
+        defer { captureSession.commitConfiguration() }
+        guard captureSession.canAddInput(input), captureSession.canAddOutput(videoOutput) else {
+            throw failure("Could not configure camera capture.")
+        }
+        captureSession.addInput(input)
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String:
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        videoOutput.setSampleBufferDelegate(self, queue: sessionQueue)
+        captureSession.addOutput(videoOutput)
+        let config: CaptureConfiguration
+        do { config = try applyFormat(to: device) }
+        catch {
+            captureSession.removeOutput(videoOutput)
+            captureSession.removeInput(input)
+            throw error
+        }
+        configured = true
+        // Set after commit as well; configuration commits can reset connection state.
+        sessionQueue.async { [weak self] in self?.setOutputOrientation() }
+        DispatchQueue.main.async {
+            self.availableCameras = cameras.map(self.info)
+            self.currentCameraID = device.uniqueID
+            self.configuration = config
+        }
+    }
+
+    private func applyFormat(to device: AVCaptureDevice) throws -> CaptureConfiguration {
+        let candidates = device.formats.filter { format in
+            let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return d.width <= requestedWidth && d.height <= requestedHeight && d.width >= 640
+                && abs(Double(d.width) / Double(d.height) - 16.0 / 9.0) < 0.03
+                && format.videoSupportedFrameRateRanges.contains {
+                    $0.minFrameRate <= Double(requestedFPS) && $0.maxFrameRate >= Double(requestedFPS)
+                }
+        }
+        guard let format = candidates.max(by: { lhs, rhs in
+            let a = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
+            let b = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
+            return a.width * a.height < b.width * b.height
+        }) else { throw failure("This camera does not support a 16:9 format at \(requestedFPS) fps.") }
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        if captureSession.canSetSessionPreset(.inputPriority) { captureSession.sessionPreset = .inputPriority }
+        device.activeFormat = format
+        let duration = CMTime(value: 1, timescale: requestedFPS)
+        device.activeVideoMinFrameDuration = duration
+        device.activeVideoMaxFrameDuration = duration
+        let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        return CaptureConfiguration(width: d.width, height: d.height, fps: requestedFPS)
+    }
+
+    private func changeCamera(to device: AVCaptureDevice, completion: ((CameraInfo?) -> Void)?) {
+        do {
+            if !configured { try setUp() }
+            let replacement = try AVCaptureDeviceInput(device: device)
+            captureSession.beginConfiguration()
+            let previous = captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first
+            if let previous { captureSession.removeInput(previous) }
+            guard captureSession.canAddInput(replacement) else {
+                if let previous { captureSession.addInput(previous) }
+                captureSession.commitConfiguration()
+                throw failure("Could not switch to this camera.")
+            }
+            captureSession.addInput(replacement)
+            let config: CaptureConfiguration
+            do { config = try applyFormat(to: device) }
+            catch {
+                captureSession.removeInput(replacement)
+                if let previous, captureSession.canAddInput(previous) { captureSession.addInput(previous) }
+                captureSession.commitConfiguration()
+                throw error
+            }
+            captureSession.commitConfiguration()
+            setOutputOrientation()
+            DispatchQueue.main.async {
+                self.currentCameraID = device.uniqueID
+                self.configuration = config
+                completion?(self.info(device))
+            }
+        } catch {
+            report(error.localizedDescription)
+            DispatchQueue.main.async { completion?(nil) }
+        }
+    }
+
+    private func setOutputOrientation() {
+        guard let connection = videoOutput.connection(with: .video) else { return }
+        if connection.isVideoOrientationSupported { connection.videoOrientation = .landscapeRight }
+        if connection.isVideoMirroringSupported { connection.isVideoMirrored = false }
+    }
+
+    private func info(_ device: AVCaptureDevice) -> CameraInfo {
+        CameraInfo(id: device.uniqueID, name: device.localizedName,
+            position: device.position == .front ? "front" : "back", type: "wide_angle", zoomFactor: 1)
+    }
+
+    private func failure(_ message: String) -> NSError {
+        NSError(domain: "UniversalCam.Camera", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func report(_ message: String) { DispatchQueue.main.async { self.onError?(message) } }
+
+    @objc private func runtimeError(_ notification: Notification) {
+        let message = (notification.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription
+        report(message ?? "Camera capture was interrupted. Stop and start the webcam to retry.")
+    }
+
+    @objc private func interrupted(_ notification: Notification) {
+        report("Camera capture is unavailable while another app is using it or the phone is locked.")
+    }
+}
+
+extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) { onVideoSampleBuffer?(sampleBuffer) }
+}

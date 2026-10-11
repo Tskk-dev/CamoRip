@@ -1,0 +1,43 @@
+<Window x:Class="UniversalCam.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="USB iPhone Camera" Width="1000" Height="740" MinWidth="720" MinHeight="580"
+        Background="#10141B" Foreground="#F1F5FA" WindowStartupLocation="CenterScreen">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,20">
+            <TextBlock Text="USB iPhone Camera" FontSize="27" FontWeight="SemiBold"/>
+            <TextBlock Text="Connect your iPhone with a Lightning cable and open the camera app."
+                       Foreground="#AEBCCD" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+        <Border Grid.Row="1" Background="#080B10" BorderBrush="#293445" BorderThickness="1" CornerRadius="10">
+            <Grid Margin="1">
+                <Image x:Name="Preview" Stretch="Uniform"/>
+                <TextBlock x:Name="Waiting" Text="Waiting for USB video" FontSize="20"
+                           Foreground="#AEBCCD" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+        <Grid Grid.Row="2" Margin="0,18,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="DeviceStatus" Text="Connecting…" FontSize="16" FontWeight="SemiBold"/>
+                <TextBlock x:Name="VideoStatus" Text="Webcam output: 1920 × 1080 at 30 fps" Foreground="#AEBCCD" Margin="0,4,0,0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="SwitchCamera" Content="Switch camera" IsEnabled="False" Click="OnSwitchCamera"/>
+                <Button x:Name="StreamButton" Content="Start video" IsEnabled="False" Click="OnToggleStream" Margin="12,0,0,0"/>
+            </StackPanel>
+        </Grid>
+        <Border Grid.Row="3" Background="#18202C" CornerRadius="8" Padding="16">
+            <StackPanel>
+                <TextBlock x:Name="CameraStatus" Text="Preparing Windows webcam…" TextWrapping="Wrap"/>
+                <TextBlock x:Name="Diagnostic" Foreground="#B8C7D9" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                <TextBlock Text="In your meeting app, select USB iPhone Camera. Keep the iPhone app open while streaming."
+                           Foreground="#B8C7D9" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
