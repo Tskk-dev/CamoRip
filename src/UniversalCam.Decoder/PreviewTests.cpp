@@ -24,7 +24,7 @@ int main() {
         preview.context->Unmap(staging.Get(),0); return value;
     };
     std::vector<BYTE> image(16*8*3/2,128);
-    std::fill(image.begin(),image.begin()+16*8,235);
+    std::fill(image.begin(),image.begin()+16*8,BYTE(235));
     VERIFY(SUCCEEDED(preview.Render(image.data(),16,8,false,false,false)));
     VERIFY(pixel(8,1)<3); VERIFY(pixel(8,8)>250); // Fit letterbox and video-range white.
     VERIFY(SUCCEEDED(preview.Render(image.data(),16,8,true,false,false)));

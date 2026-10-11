@@ -229,9 +229,9 @@ internal sealed class StreamingService : IAsyncDisposable
             if (!IsCurrent(queued.Generation)) return;
             _lastPreviewTicks = now;
             var started = Stopwatch.GetTimestamp();
-            PreviewFrame?.Invoke(queued.Frame);
+            bool rendered = PreviewFrame?.Invoke(queued.Frame) == true;
             _previewTiming.Record(started);
-            Interlocked.Increment(ref _previewFrames);
+            if (rendered) Interlocked.Increment(ref _previewFrames);
         }
         catch (Exception ex) { App.Log(ex); SetStatus("Diagnostic", "Preview: " + ex.Message); }
         finally { queued.Frame.Release(); }
@@ -316,7 +316,7 @@ internal sealed class StreamingService : IAsyncDisposable
     public bool Streaming => _streaming;
     public volatile int PreviewFps = 60;
     public volatile bool PreviewVisible = true;
-    public Action<DecodedFrame>? PreviewFrame;
+    public Func<DecodedFrame, bool>? PreviewFrame;
     public event Action? Changed;
     public readonly Dictionary<string, string> Status = new();
     private void SetStatus(string key, string value) { Status[key] = value; Changed?.Invoke(); }

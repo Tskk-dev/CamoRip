@@ -40,12 +40,13 @@ public sealed partial class MainWindow : Window
         _service.Changed += Refresh;
         _service.PreviewFrame = frame =>
         {
-            if (Stopwatch.GetTimestamp() < _previewRetry) return;
+            if (Stopwatch.GetTimestamp() < _previewRetry) return false;
             try
             {
                 if (_gpu is null) _gpu = new GpuPreview(Preview);
-                _gpu.Render(frame, App.Settings.PreviewFill, App.Settings.PreviewMirror);
-                Waiting.Visibility = Visibility.Collapsed;
+                bool rendered = _gpu.Render(frame, App.Settings.PreviewFill, App.Settings.PreviewMirror);
+                if (rendered) Waiting.Visibility = Visibility.Collapsed;
+                return rendered;
             }
             catch
             {
@@ -210,15 +211,15 @@ public sealed partial class MainWindow : Window
     {
         if (_state is null) return;
         foreach (var (key, slider) in _sliders) slider.IsEnabled = _state.Ranges.ContainsKey(key);
-        AutoExposure.IsEnabled = _state.AutoExposureSupported;
-        AutoFocus.IsEnabled = _state.AutoFocusSupported;
-        AutoWhiteBalance.IsEnabled = _state.AutoWhiteBalanceSupported;
+        AutoExposure.IsEnabled = _state.AutoExposureSupported && _state.Ranges.ContainsKey("iso");
+        AutoFocus.IsEnabled = _state.AutoFocusSupported && _state.Ranges.ContainsKey("focus");
+        AutoWhiteBalance.IsEnabled = _state.AutoWhiteBalanceSupported && _state.Ranges.ContainsKey("temperature");
         Iso.IsEnabled &= !AutoExposure.IsOn; Shutter.IsEnabled &= !AutoExposure.IsOn;
         ExposureBias.IsEnabled &= AutoExposure.IsOn;
         Focus.IsEnabled &= !AutoFocus.IsOn;
         Temperature.IsEnabled &= !AutoWhiteBalance.IsOn; Tint.IsEnabled &= !AutoWhiteBalance.IsOn;
         Torch.IsEnabled = _state.TorchAvailable && _service.Streaming;
-        TorchLevel.IsEnabled = Torch.IsEnabled && _state.Ranges.ContainsKey("torch_level");
+        TorchLevel.IsEnabled = Torch.IsEnabled && _state.TorchOn && _state.Ranges.ContainsKey("torch_level");
     }
     private void OnPreviewOptions(object sender, object e)
     {

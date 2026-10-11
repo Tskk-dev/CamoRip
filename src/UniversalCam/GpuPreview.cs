@@ -35,9 +35,11 @@ internal sealed class GpuPreview : IDisposable
         var scale = _panel.XamlRoot?.RasterizationScale ?? 1;
         Marshal.ThrowExceptionForHR(UCamPreviewResize(_handle, Math.Clamp((int)(_panel.ActualWidth * scale), 1, 16384), Math.Clamp((int)(_panel.ActualHeight * scale), 1, 16384), (float)scale));
     }
-    public void Render(DecodedFrame frame, bool fill, bool mirror)
+    public bool Render(DecodedFrame frame, bool fill, bool mirror)
     {
-        Marshal.ThrowExceptionForHR(UCamPreviewRender(_handle, frame.Data, frame.Data.Length, frame.Width, frame.Height, fill ? 1 : 0, mirror ? 1 : 0));
+        int result = UCamPreviewRender(_handle, frame.Data, frame.Data.Length, frame.Width, frame.Height, fill ? 1 : 0, mirror ? 1 : 0);
+        Marshal.ThrowExceptionForHR(result);
+        return result == 0;
     }
     public void Dispose()
     {
