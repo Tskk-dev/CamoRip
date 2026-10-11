@@ -113,8 +113,8 @@ public sealed class UsbMuxClient
         const uint tag = 1; // A new service connection owns every request.
         var dictionary = new XElement("dict",
             Entry("MessageType", "string", message),
-            Entry("ClientVersionString", "string", "PocketCam 0.1"),
-            Entry("ProgName", "string", "PocketCam"),
+            Entry("ClientVersionString", "string", "UniversalCam 0.1"),
+            Entry("ProgName", "string", "UniversalCam"),
             Entry("kLibUSBMuxVersion", "integer", "3"), extraEntries);
         var document = new XDocument(new XDeclaration("1.0", "UTF-8", null),
             new XDocumentType("plist", "-//Apple//DTD PLIST 1.0//EN", "http://www.apple.com/DTDs/PropertyList-1.0.dtd", null),
@@ -165,7 +165,7 @@ public sealed class UsbMuxException : IOException
     public UsbMuxException(int code) : base(code switch
     {
         2 => "The iPhone disconnected from USB. Reconnect the cable and unlock the phone.",
-        3 => "The iPhone app is not accepting connections. Unlock the phone and open PocketCam; check Trust This Computer in Apple Devices.",
+        3 => "The iPhone app is not accepting connections. Unlock the phone and open UniversalCam; check Trust This Computer in Apple Devices.",
         6 => "Apple USB service does not support the expected protocol. Update Apple Devices or iTunes.",
         _ => $"Apple USB service rejected the connection (code {code}). Unlock the phone and check Apple Devices."
     }) => ResultCode = code;

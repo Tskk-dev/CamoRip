@@ -2,6 +2,7 @@ name: Build webcam apps
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

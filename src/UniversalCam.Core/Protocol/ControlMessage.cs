@@ -55,7 +55,7 @@ public abstract record ControlMessage
 
 // ── PC → iPhone ──────────────────────────────────────────────────────────────
 
-/// Sent by PC immediately after QUIC/TCP connection is established.
+/// Sent by PC immediately after the USB tunnel is established.
 public sealed record Welcome : ControlMessage
 {
     public override string Type => "welcome";

@@ -97,7 +97,7 @@ public sealed class TcpUsbTransport : ITransport
                     Report("USB connected. Waiting for the iPhone app.");
                     SetState(TransportState.Connected);
                     await ReceiveLoopAsync(_stream!, ct);
-                    Report("USB connection interrupted. Reconnect the cable and keep PocketCam open on the iPhone.");
+                    Report("USB connection interrupted. Reconnect the cable and keep UniversalCam open on the iPhone.");
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }

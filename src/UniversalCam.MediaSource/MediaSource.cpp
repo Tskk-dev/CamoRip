@@ -322,7 +322,8 @@ public:
         ComPtr<IMFMediaTypeHandler> handler; ComPtr<IMFMediaType> type;
         CHECK_HR(descriptor->GetMediaTypeHandler(&handler));
         CHECK_HR(handler->GetCurrentMediaType(&type));
-        CHECK_HR(events_->QueueEventParamUnk(announced_ ? MEUpdatedStream : MENewStream, GUID_NULL, S_OK, stream_.Get()));
+        CHECK_HR(events_->QueueEventParamUnk(announced_ ? MEUpdatedStream : MENewStream, GUID_NULL, S_OK,
+            static_cast<IMFMediaStream*>(stream_.Get())));
         CHECK_HR(stream_->Start(type.Get()));
         PROPVARIANT time{}; CHECK_HR(InitPropVariantFromInt64(MFGetSystemTime(), &time));
         const auto hr = events_->QueueEventParamVar(MESourceStarted, GUID_NULL, S_OK, &time);

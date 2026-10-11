@@ -3,7 +3,7 @@ using UniversalCam.Core.Protocol;
 namespace UniversalCam.Core.Transport;
 
 /// <summary>
-/// Common interface for both QUIC (Wi-Fi) and TCP/USB transport implementations.
+/// Interface for the local Apple USB tunnel.
 /// </summary>
 public interface ITransport : IAsyncDisposable
 {

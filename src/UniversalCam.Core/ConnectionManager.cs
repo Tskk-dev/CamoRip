@@ -139,7 +139,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             if (_sessionReady) return;
             if (!hello.Capabilities.Contains("h264"))
             {
-                Report("The connected app does not support H.264 video. Install the matching PocketCam IPA.");
+                Report("The connected app does not support H.264 video. Install the matching UniversalCam IPA.");
                 SetState(TransportState.Error);
                 return;
             }

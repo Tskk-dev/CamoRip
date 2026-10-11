@@ -60,7 +60,7 @@ public class UsbMuxClientTests
         var error = await Assert.ThrowsAsync<UsbMuxException>(() => new UsbMuxClient(service.Port)
             .OpenTunnelAsync(new UsbMuxDevice(1, "phone"), 7780));
         Assert.Equal(3, error.ResultCode);
-        Assert.Contains("open PocketCam", error.Message);
+        Assert.Contains("open UniversalCam", error.Message);
         await server;
     }
 

@@ -66,9 +66,15 @@ HRESULT Verify(HMODULE module) {
     }
     if (!stream) return E_UNEXPECTED;
     LONGLONG previousTime = -1;
-    for (int index = 0; index != 4; ++index) {
-        ComPtr<IMFAttributes> token; CHECK_HR(MFCreateAttributes(&token, 1));
-        CHECK_HR(token->SetUINT32(UCAM_FRAME_PATH, index));
+    for (int index = 0; index != 24; ++index) {
+        if (index < 16) CHECK_HR(writeFrame(writer.value, pixels.data(), FrameBytes, index * 33333));
+        if (index == 16) { closeWriter(writer.value); writer.value = nullptr; }
+        const bool hasToken = index % 3 != 1;
+        ComPtr<IMFAttributes> token;
+        if (hasToken) {
+            CHECK_HR(MFCreateAttributes(&token, 1));
+            CHECK_HR(token->SetUINT32(UCAM_FRAME_PATH, index));
+        }
         CHECK_HR(stream->RequestSample(token.Get()));
         for (;;) {
             ComPtr<IMFMediaEvent> event; CHECK_HR(stream->GetEvent(0, &event));
@@ -80,15 +86,22 @@ HRESULT Verify(HMODULE module) {
             auto hr = value.vt == VT_UNKNOWN ? value.punkVal->QueryInterface(IID_PPV_ARGS(&sample)) : E_UNEXPECTED;
             PropVariantClear(&value); CHECK_HR(hr);
             ComPtr<IMFAttributes> returnedToken;
-            CHECK_HR(sample->GetUnknown(MFSampleExtension_Token, IID_PPV_ARGS(&returnedToken)));
-            UINT32 tokenIndex = 100; CHECK_HR(returnedToken->GetUINT32(UCAM_FRAME_PATH, &tokenIndex));
+            const auto tokenResult = sample->GetUnknown(MFSampleExtension_Token, IID_PPV_ARGS(&returnedToken));
+            if (hasToken) {
+                CHECK_HR(tokenResult);
+                UINT32 tokenIndex = 100; CHECK_HR(returnedToken->GetUINT32(UCAM_FRAME_PATH, &tokenIndex));
+                if (tokenIndex != static_cast<UINT32>(index)) return E_UNEXPECTED;
+            } else if (tokenResult != MF_E_ATTRIBUTENOTFOUND) return E_UNEXPECTED;
+            UINT32 discontinuity = 100;
+            CHECK_HR(sample->GetUINT32(MFSampleExtension_Discontinuity, &discontinuity));
+            if (discontinuity != static_cast<UINT32>(index == 0 || index == 16)) return E_UNEXPECTED;
             LONGLONG time, duration; CHECK_HR(sample->GetSampleTime(&time)); CHECK_HR(sample->GetSampleDuration(&duration));
             DWORD length = 0; CHECK_HR(sample->GetTotalLength(&length));
-            if (tokenIndex != static_cast<UINT32>(index) || time <= previousTime || duration != FrameDuration || length != FrameBytes) return E_UNEXPECTED;
+            if (time <= previousTime || duration != FrameDuration || length != FrameBytes) return E_UNEXPECTED;
             previousTime = time;
             ComPtr<IMFMediaBuffer> buffer; CHECK_HR(sample->ConvertToContiguousBuffer(&buffer));
             BYTE* data = nullptr; CHECK_HR(buffer->Lock(&data, nullptr, nullptr));
-            const bool matches = data[0] == 128;
+            const bool matches = data[0] == (index < 16 ? 128 : 32);
             CHECK_HR(buffer->Unlock());
             if (!matches) return E_FAIL;
             break;
@@ -99,7 +112,6 @@ HRESULT Verify(HMODULE module) {
     CHECK_HR(source->Stop());
     CHECK_HR(source->Shutdown());
     if (source->Stop() != MF_E_SHUTDOWN) return E_UNEXPECTED;
-    closeWriter(writer.value); writer.value = nullptr;
     return S_OK;
 }
 
@@ -116,7 +128,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     CoUninitialize();
     if (FAILED(hr)) { std::cerr << "Provider smoke test failed: 0x" << std::hex << static_cast<unsigned long>(hr) << '\n'; return 1; }
-    std::cout << "Provider source: NV12 1080p30, shared frame, tokens, timestamps, restart, shutdown passed.\n";
+    std::cout << "Provider source: NV12 1080p30, 24 samples, shared frames, closed-writer placeholder, recycled/null tokens, timestamps, restart, shutdown passed.\n";
     return 0;
 }
 
