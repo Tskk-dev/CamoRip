@@ -47,7 +47,11 @@ final class VideoEncoder {
     func encode(_ sampleBuffer: CMSampleBuffer) {
         // Bound retained capture buffers when the encoder cannot keep up.
         pendingLock.lock()
-        guard pendingFrames < 2 else { pendingLock.unlock(); return }
+        guard pendingFrames < 2 else {
+            pendingLock.unlock()
+            DiagnosticLog.record(.encodeDropped)
+            return
+        }
         pendingFrames += 1
         pendingLock.unlock()
         let retained = sampleBuffer
@@ -257,6 +261,7 @@ private func outputCallback(
     guard timestamp.isValid else { return }
     let ptsUs = timestamp.value
     let frame = VideoEncoder.EncodedFrame(data: annexB, ptsUs: ptsUs, isKeyframe: isKeyframe)
+    DiagnosticLog.record(.encoded)
     encoder.onEncodedFrame?(frame)
 }
 

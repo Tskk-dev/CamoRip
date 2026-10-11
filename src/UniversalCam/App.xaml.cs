@@ -8,6 +8,9 @@ public partial class App : Application
     private Mutex? _instance;
     private bool _ownsInstance;
     private static StreamWriter? _log;
+    private static readonly string LogFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalCam", "Logs", "latest.log");
+    internal static string LogDirectory => Path.GetDirectoryName(LogFilePath)!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -20,22 +23,26 @@ public partial class App : Application
         }
         try
         {
-            var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalCam", "Logs");
-            Directory.CreateDirectory(folder);
-            _log = new StreamWriter(Path.Combine(folder, "latest.log"), false) { AutoFlush = true };
+            Directory.CreateDirectory(LogDirectory);
+            _log = new StreamWriter(LogFilePath, false) { AutoFlush = true };
+            Log("INFO", $"Application started. OS={Environment.OSVersion}; Process={(Environment.Is64BitProcess ? "x64" : "x86")}");
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
         base.OnStartup(e);
     }
 
-    internal static void Log(Exception error)
+    internal static void Log(Exception error) => Log("ERROR", error.ToString());
+
+    internal static void Log(string level, string message)
     {
         lock (typeof(App))
         {
-            Console.Error.WriteLine(error);
-            try { _log?.WriteLine($"{DateTimeOffset.Now:O} {error}"); }
+            var line = $"{DateTimeOffset.Now:O} [{level}] {message}";
+            Console.Error.WriteLine(line);
+            try { _log?.WriteLine(line); }
             catch (IOException) { }
+            catch (ObjectDisposedException) { }
         }
     }
 
