@@ -9,4 +9,3 @@ target_compile_definitions(UniversalCam.Decoder PRIVATE UNICODE _UNICODE WIN32_L
 target_compile_options(UniversalCam.Decoder PRIVATE /W4 /EHsc /permissive-)
 target_link_libraries(UniversalCam.Decoder PRIVATE mfplat mfuuid wmcodecdspuuid ole32 oleaut32 d3d11 dxgi d3dcompiler)
 set_property(TARGET UniversalCam.Decoder PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-

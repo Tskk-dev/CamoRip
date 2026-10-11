@@ -24,14 +24,14 @@ internal sealed class StreamingService : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly StageTiming _decodeTiming = new(), _cameraTiming = new(), _previewTiming = new();
     private VirtualCameraSession? _camera;
-    private Task? _decodeTask, _cameraTask, _previewTask, _metricsTask;
+    private Task? _decodeTask, _cameraTask, _metricsTask;
 
-    // At most one retained preview frame may wait for the UI/render thread.
 
     private bool _streaming;
     private volatile bool _closing;
     private bool _closed;
-    private int _previewPending, _decodedWidth, _decodedHeight;
+    private int _decodedWidth, _decodedHeight;
+    private long _lastPreviewTicks;
     private long _decodingGeneration;
     private long _receivedFrames, _decodedFrames, _cameraFrames, _previewFrames;
     private long _cameraCoalesced, _previewCoalesced, _publishFailures;
@@ -118,7 +118,6 @@ internal sealed class StreamingService : IAsyncDisposable
             TaskCreationOptions.LongRunning, TaskScheduler.Default);
         _cameraTask = Task.Factory.StartNew(PublishCameraFrames, CancellationToken.None,
             TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        _previewTask = Task.Run(PreviewFrames);
         _metricsTask = Task.Run(CollectMetrics);
         App.Log("INFO", "Pipeline v5: WinUI D3D11 shader preview; pooled NV12 buffers; MMCSS dedicated decoder/publisher; D3D11 hardware preferred; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
         try { await _connection.StartAsync(); }
@@ -218,41 +217,24 @@ internal sealed class StreamingService : IAsyncDisposable
         catch (Exception ex) { App.Log(ex); }
     }
 
-    private async Task PreviewFrames()
+    // Called on the WinUI display clock. Never block the capture/decoder or publisher.
+    public void RenderLatestPreview()
     {
+        if (_closing || !PreviewVisible || PreviewFps == 0) return;
+        var now = Stopwatch.GetTimestamp();
+        if (_lastPreviewTicks != 0 && Stopwatch.GetElapsedTime(_lastPreviewTicks, now).TotalSeconds < 1.0 / PreviewFps - 0.001) return;
+        if (!_previewFramesQueue.Reader.TryRead(out var queued)) return;
         try
         {
-            while (await _previewFramesQueue.Reader.WaitToReadAsync(_shutdown.Token))
-            {
-                int fps = PreviewFps;
-                if (fps > 0 && PreviewVisible) await Task.Delay(TimeSpan.FromSeconds(1.0 / fps), _shutdown.Token);
-                if (!_previewFramesQueue.Reader.TryRead(out var queued)) continue;
-                try
-                {
-                    if (!IsCurrent(queued.Generation) || !PreviewVisible || fps == 0) continue;
-                    if (Interlocked.Exchange(ref _previewPending, 1) != 0) continue;
-                    var retained = queued.Frame.Retain();
-                    Ui(() =>
-                    {
-                        try
-                        {
-                            if (IsCurrent(queued.Generation) && PreviewVisible && PreviewFps > 0)
-                            {
-                                var started = Stopwatch.GetTimestamp();
-                                PreviewFrame?.Invoke(retained);
-                                _previewTiming.Record(started);
-                                Interlocked.Increment(ref _previewFrames);
-                            }
-                        }
-                        catch (Exception ex) { App.Log(ex); SetStatus("Diagnostic", "Preview: " + ex.Message); }
-                        finally { retained.Release(); Interlocked.Exchange(ref _previewPending, 0); }
-                    });
-                }
-                finally { queued.Frame.Release(); }
-            }
+            if (!IsCurrent(queued.Generation)) return;
+            _lastPreviewTicks = now;
+            var started = Stopwatch.GetTimestamp();
+            PreviewFrame?.Invoke(queued.Frame);
+            _previewTiming.Record(started);
+            Interlocked.Increment(ref _previewFrames);
         }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
-        catch (Exception ex) { App.Log(ex); }
+        catch (Exception ex) { App.Log(ex); SetStatus("Diagnostic", "Preview: " + ex.Message); }
+        finally { queued.Frame.Release(); }
     }
 
     private async Task CollectMetrics()
@@ -348,7 +330,7 @@ internal sealed class StreamingService : IAsyncDisposable
         if (_decodeTask is not null) await _decodeTask;
         _cameraFramesQueue.Complete();
         _previewFramesQueue.Writer.TryComplete();
-        await Task.WhenAll(new[] { _cameraTask, _previewTask, _metricsTask }.OfType<Task>());
+        await Task.WhenAll(new[] { _cameraTask, _metricsTask }.OfType<Task>());
         while (_previewFramesQueue.Reader.TryRead(out var pending)) pending.Frame.Release();
         _decoder.Dispose();
         _shutdown.Dispose();

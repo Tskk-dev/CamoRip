@@ -138,6 +138,3 @@ public sealed class VirtualCameraSession : IDisposable
         }
     }
 }
-
-
-

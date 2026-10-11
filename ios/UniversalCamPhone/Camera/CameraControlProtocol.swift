@@ -21,4 +21,3 @@ struct CameraControlState: Codable {
     var ranges: [String: CameraControlRange] = [:]
     var values: [String: Double] = [:]
 }
-

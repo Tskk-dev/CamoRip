@@ -17,6 +17,8 @@ public sealed partial class MainWindow : Window
     private bool _ready, _updating, _exiting, _hidden, _fullscreen, _sending;
     private long _requestId, _confirmedId, _lastSent;
     private GpuPreview? _gpu;
+    private bool _rendering;
+    private long _previewRetry;
     internal MainWindow(App app, StreamingService service)
     {
         _app = app; _service = service;
@@ -33,12 +35,23 @@ public sealed partial class MainWindow : Window
         FillPreview.IsOn = settings.PreviewFill; MirrorPreview.IsOn = settings.PreviewMirror;
         _service.PreviewFps = settings.PreviewFps;
         Navigation.SelectedItem = Navigation.MenuItems[0];
+        Preview.CompositionScaleChanged += (_, _) => OnPreviewSize(Preview, null!);
         _service.Changed += Refresh;
         _service.PreviewFrame = frame =>
         {
-            if (_gpu is null) _gpu = new GpuPreview(Preview);
-            _gpu.Render(frame, App.Settings.PreviewFill, App.Settings.PreviewMirror);
-            Waiting.Visibility = Visibility.Collapsed;
+            if (Stopwatch.GetTimestamp() < _previewRetry) return;
+            try
+            {
+                if (_gpu is null) _gpu = new GpuPreview(Preview);
+                _gpu.Render(frame, App.Settings.PreviewFill, App.Settings.PreviewMirror);
+                Waiting.Visibility = Visibility.Collapsed;
+            }
+            catch
+            {
+                _gpu?.Dispose(); _gpu = null;
+                _previewRetry = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 2;
+                throw;
+            }
         };
         _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
@@ -47,7 +60,7 @@ public sealed partial class MainWindow : Window
             ControlStatus.Text = state == TransportState.Connected && !_service.Connection.SupportsCameraSettings
                 ? "Update the iPhone app to use camera controls." : "Waiting for phone camera capabilities";
         });
-        _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; Adjustments.IsEnabled = false; });
+        _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; _confirmedId = _requestId; Adjustments.IsEnabled = false; });
         _commands = DispatcherQueue.CreateTimer(); _commands.Interval = TimeSpan.FromMilliseconds(50);
         _commands.Tick += async (_, _) => await FlushCommands(); _commands.Start();
         AppWindow.Closing += (_, e) =>
@@ -57,6 +70,11 @@ public sealed partial class MainWindow : Window
             if (App.Settings.CloseToTray) HideToTray(); else App.Run(_app.ExitAsync);
         };
         AppWindow.Changed += (_, _) => UpdatePreviewVisibility();
+        Root.KeyDown += (_, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.F11 || (_fullscreen && e.Key == Windows.System.VirtualKey.Escape))
+            { OnFullscreen(Root, new RoutedEventArgs()); e.Handled = true; }
+        };
         _ready = true;
     }
     private void Refresh()
@@ -72,6 +90,12 @@ public sealed partial class MainWindow : Window
     {
         _service.PreviewVisible = !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
         bool visible = _service.PreviewVisible && _service.PreviewFps > 0 && _service.Streaming;
+        if (_rendering != visible)
+        {
+            _rendering = visible;
+            if (visible) Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnRendering;
+            else Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering;
+        }
         Preview.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         if (!visible) { Waiting.Text = _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for USB video"; Waiting.Visibility = Visibility.Visible; }
     }
@@ -82,7 +106,8 @@ public sealed partial class MainWindow : Window
         if (AppWindow.Presenter is OverlappedPresenter p) p.Restore();
         Activate(); UpdatePreviewVisibility();
     }
-    internal void PrepareExit() { _exiting = true; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
+    private void OnRendering(object? sender, object e) => _service.RenderLatestPreview();
+    internal void PrepareExit() { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering; _exiting = true; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
     private void OnNavigation(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (CameraPage is null) return;
@@ -177,7 +202,11 @@ public sealed partial class MainWindow : Window
         settings.PreviewFill = FillPreview.IsOn; settings.PreviewMirror = MirrorPreview.IsOn;
         _service.PreviewFps = settings.PreviewFps; UpdatePreviewVisibility(); SaveSettings();
     }
-    private void OnPreviewSize(object sender, SizeChangedEventArgs e) { _gpu?.Resize(); }
+    private void OnPreviewSize(object sender, SizeChangedEventArgs e)
+    {
+        try { _gpu?.Resize(); }
+        catch (Exception ex) { App.Log(ex); _gpu?.Dispose(); _gpu = null; Diagnostic.Text = "Preview resizing: " + ex.Message; }
+    }
     private void OnFullscreen(object sender, RoutedEventArgs e)
     {
         _fullscreen = !_fullscreen;

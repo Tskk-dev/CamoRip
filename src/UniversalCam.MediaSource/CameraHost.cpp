@@ -83,5 +83,3 @@ extern "C" HRESULT __stdcall UCamRemoveCamera() {
     cleanup.join();
     return result;
 }
-
-
