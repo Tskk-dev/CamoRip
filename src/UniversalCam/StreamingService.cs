@@ -32,7 +32,7 @@ internal sealed class StreamingService : IAsyncDisposable
     private volatile bool _closing;
     private bool _closed;
     private int _decodedWidth, _decodedHeight;
-    private long _lastPreviewTicks;
+    private readonly PreviewCadence _previewCadence = new(Stopwatch.Frequency);
     private long _decodingGeneration;
     private long _receivedFrames, _decodedFrames, _cameraFrames, _previewFrames;
     private long _cameraCoalesced, _previewCoalesced, _publishFailures;
@@ -255,12 +255,12 @@ internal sealed class StreamingService : IAsyncDisposable
     {
         if (_closing || !PreviewVisible || PreviewFps == 0) return;
         var now = Stopwatch.GetTimestamp();
-        if (_lastPreviewTicks != 0 && Stopwatch.GetElapsedTime(_lastPreviewTicks, now).TotalSeconds < 1.0 / PreviewFps - 0.001) return;
+        if (!_previewCadence.IsDue(now, PreviewFps)) return;
         if (!_previewFramesQueue.Reader.TryRead(out var queued)) return;
         try
         {
             if (!IsCurrent(queued.Generation)) return;
-            _lastPreviewTicks = now;
+            _previewCadence.Presented(now);
             var started = Stopwatch.GetTimestamp();
             bool rendered = PreviewFrame?.Invoke(queued.Frame) == true;
             _previewTiming.Record(started);

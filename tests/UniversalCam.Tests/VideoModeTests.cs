@@ -24,6 +24,19 @@ public class VideoModeTests
     [InlineData(double.NaN, 1, false)] [InlineData(0, double.PositiveInfinity, false)]
     public void InvalidSliderRangesAreRejected(double min, double max, bool valid)
         => Assert.Equal(valid, new ControlRange { Min = min, Max = max }.IsValid);
+    [Theory] [InlineData(75, 60)] [InlineData(120, 60)] [InlineData(60, 30)]
+    public void PreviewCadenceDoesNotRoundDownToHalfRefresh(int refresh, int target)
+    {
+        var cadence = new PreviewCadence(60_000); int count = 0;
+        for (int i = 0; i < refresh * 2; ++i) {
+            long now = (long)i * 60_000 / refresh;
+            if (!cadence.IsDue(now, target)) continue;
+            cadence.Presented(now); ++count;
+        }
+        Assert.InRange(count, target * 2 - 1, target * 2 + 1);
+        Assert.False(cadence.IsDue(120_000, 0));
+        Assert.True(cadence.IsDue(120_000, 15));
+    }
     [Fact] public void CapturePreferenceSurvivesReload()
     {
         var path = Path.Combine(Path.GetTempPath(), "CamoRip-mode-" + Guid.NewGuid());
