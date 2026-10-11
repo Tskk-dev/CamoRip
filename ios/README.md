@@ -68,3 +68,36 @@ foreground recovery, disconnect/reconnect during a stream, and sustained rear
 1080p60 performance/temperature. A macOS hosted build cannot validate those on an
 iPhone 6s Plus. Also verify that the listener is unreachable from another machine
 over Wi-Fi while USB streaming succeeds.
+
+## Cooler display mode (0.1.1)
+
+While streaming, the phone preview defaults off. Enable **Show preview while
+streaming** to frame a shot; disabling it detaches AVCaptureVideoPreviewLayer
+without stopping capture or changing video sent to Windows. The preview remains
+available before streaming.
+
+**Dim screen after 15 seconds** defaults on. After inactivity the app uses minimum
+UIScreen brightness and a simple black screen with tap-to-restore controls. A tap
+restores the saved brightness and restarts the 15-second timer. Stopping, USB
+disconnection, errors, leaving the app or turning the option off restores
+brightness. Both settings persist. Minimum brightness is not screen lock or a
+backlight-off mode; keep the app in the foreground. The iPhone 6s Plus LCD still
+uses its backlight at minimum brightness.
+
+Capture remains 1080p60; no thermal FPS reduction is applied. Encoded contiguous
+AVCC buffers are read directly into one preallocated Annex B packet, retaining
+a copy fallback for noncontiguous Core Media storage. USB packets reserve their
+final size. These remove avoidable copies; actual heat/fps benefits need a
+physical retest. Phone logs now include captureDropped, thermal state and screen
+brightness; serious/critical thermal state also appears in the UI.
+
+The macOS workflow builds an iOS 15 IPA and runs simulator checks for brightness
+restoration and Annex B conversion. The simulator does not prove physical
+brightness, preview detachment, USB streaming or phone temperature changes.
+
+Retest on the phone: stream with Wi-Fi off; enable/disable preview without
+interrupting the PC feed; wait 15 seconds and tap to wake; repeat after camera
+switch, Stop, unplug, Control Center and background/foreground; confirm original
+brightness is restored and both screen orientations keep controls reachable.
+Compare phone thermal states and capture/encode/send counters with preview off
+and minimum brightness over the same capture duration.

@@ -261,6 +261,11 @@ final class CameraSession: NSObject, ObservableObject {
 }
 
 extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        DiagnosticLog.record(.captureDropped)
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         DiagnosticLog.record(.captured)

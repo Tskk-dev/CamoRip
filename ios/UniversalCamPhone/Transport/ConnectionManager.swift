@@ -277,7 +277,9 @@ final class ConnectionManager: ObservableObject {
     private func startMetricsLogging() {
         metricsTimer?.invalidate()
         metricsTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
-            DiagnosticLog.write("METRIC " + DiagnosticLog.takeMetrics())
+            DiagnosticLog.write("METRIC " + DiagnosticLog.takeMetrics() +
+                " thermal=\(StreamingScreenDimmer.thermalName(ProcessInfo.processInfo.thermalState))" +
+                " brightness=\(String(format: "%.2f", Double(UIScreen.main.brightness)))")
         }
     }
 

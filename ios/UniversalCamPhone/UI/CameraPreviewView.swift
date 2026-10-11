@@ -18,6 +18,11 @@ struct CameraPreviewView: UIViewRepresentable {
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
         uiView.setBlurred(blurred)
     }
+
+    static func dismantleUIView(_ uiView: PreviewUIView, coordinator: ()) {
+        // Removing the SwiftUI view must detach capture, not merely cover live rendering.
+        uiView.videoPreviewLayer.session = nil
+    }
 }
 
 // MARK: - PreviewUIView

@@ -39,8 +39,8 @@ targets:
       properties:
         CFBundleName: UniversalCam
         CFBundleDisplayName: UniversalCam
-        CFBundleVersion: "1"
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "2"
+        CFBundleShortVersionString: "0.1.1"
         UILaunchStoryboardName: ""
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -56,6 +56,21 @@ targets:
       testTargets: []
       gatherCoverageData: false
 
+  UniversalCamPhoneTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests
+      - path: UniversalCamPhone/Camera/AnnexB.swift
+      - path: UniversalCamPhone/UI/StreamingScreenDimmer.swift
+      - path: UniversalCamPhone/Diagnostics/DiagnosticLog.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        CODE_SIGNING_ALLOWED: NO
+
 schemes:
   UniversalCamPhone:
     build:
@@ -65,6 +80,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      targets:
+        - UniversalCamPhoneTests
     profile:
       config: Release
     analyze:

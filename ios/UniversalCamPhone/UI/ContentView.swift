@@ -7,12 +7,22 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var cameraAuthorized = false
     @State private var permissionChecked = false
+    @AppStorage("showStreamingPreview") private var showStreamingPreview = false
+    @AppStorage("dimStreamingScreen") private var dimStreamingScreen = true
+    @StateObject private var screenDimmer = StreamingScreenDimmer()
+
+    private var showPreview: Bool {
+        cameraAuthorized && scenePhase == .active && !screenDimmer.isDimmed &&
+            (connection.state != .streaming || showStreamingPreview)
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             if cameraAuthorized {
-                CameraPreviewView(session: camera.captureSession).ignoresSafeArea()
+                if showPreview {
+                    CameraPreviewView(session: camera.captureSession).ignoresSafeArea()
+                }
                 VStack(spacing: 16) {
                     HStack {
                         Label(status, systemImage: connection.state == .streaming ? "video.fill" : "cable.connector")
@@ -22,48 +32,64 @@ struct ContentView: View {
                         Spacer()
                     }
                     Spacer()
-                    VStack(spacing: 10) {
-                        Text(connection.formatLabel).font(.headline)
-                        if connection.state == .streaming {
-                            Text("Diagnostics: Files › On My iPhone › UniversalCam › UniversalCam.log")
-                                .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        }
-                        Text(hint).font(.callout).multilineTextAlignment(.center)
-                        if connection.state == .streaming && connection.latencyMs > 0 {
-                            Text("USB latency: \(connection.latencyMs) ms").font(.caption)
-                        }
-                        HStack(spacing: 16) {
-                            Button {
-                                if connection.wantsStreaming { connection.stopStreaming() }
-                                else { connection.startStreaming() }
-                            } label: {
-                                Label(connection.wantsStreaming ? "Stop" : "Start",
-                                    systemImage: connection.wantsStreaming ? "stop.fill" : "play.fill")
-                                    .frame(minWidth: 100)
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            Text(connection.formatLabel).font(.headline)
+                            if connection.state == .streaming {
+                                Text("Diagnostics: Files › On My iPhone › UniversalCam › UniversalCam.log")
+                                    .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(connection.activeTransport == nil)
+                            Text(hint).font(.callout).multilineTextAlignment(.center)
+                            Toggle("Show preview while streaming", isOn: $showStreamingPreview)
+                                .font(.callout)
+                            Toggle("Dim screen after 15 seconds", isOn: $dimStreamingScreen)
+                                .font(.callout)
+                            if connection.state == .streaming && !showStreamingPreview {
+                                Text("Phone preview is off. Video still reaches your PC.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            if screenDimmer.thermalState == .serious || screenDimmer.thermalState == .critical {
+                                Text("iPhone is hot. Pause streaming if it needs to cool down.")
+                                    .font(.callout).foregroundStyle(.orange)
+                            }
+                            if connection.state == .streaming && connection.latencyMs > 0 {
+                                Text("USB latency: \(connection.latencyMs) ms").font(.caption)
+                            }
+                            HStack(spacing: 16) {
+                                Button {
+                                    if connection.wantsStreaming { connection.stopStreaming() }
+                                    else { connection.startStreaming() }
+                                } label: {
+                                    Label(connection.wantsStreaming ? "Stop" : "Start",
+                                        systemImage: connection.wantsStreaming ? "stop.fill" : "play.fill")
+                                        .frame(minWidth: 100)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(connection.activeTransport == nil)
 
-                            Button { connection.switchCamera() } label: {
-                                Label("Switch", systemImage: "arrow.triangle.2.circlepath.camera")
+                                Button { connection.switchCamera() } label: {
+                                    Label("Switch", systemImage: "arrow.triangle.2.circlepath.camera")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!camera.isRunning || camera.availableCameras.count < 2)
                             }
-                            .buttonStyle(.bordered)
-                            .disabled(!camera.isRunning || camera.availableCameras.count < 2)
-                        }
-                        if case .error = connection.state {
-                            Button("Retry USB connection") {
-                                camera.start()
-                                connection.disconnect()
-                                connection.startDiscovery()
-                            }.buttonStyle(.bordered)
+                            if case .error = connection.state {
+                                Button("Retry USB connection") {
+                                    camera.start()
+                                    connection.disconnect()
+                                    connection.startDiscovery()
+                                }.buttonStyle(.bordered)
+                            }
                         }
                     }
+                    .frame(maxHeight: 340)
                     .padding(20)
                     .frame(maxWidth: .infinity)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
                 }
                 .foregroundStyle(.white)
                 .padding()
+                .accessibilityHidden(screenDimmer.isDimmed)
             } else if permissionChecked {
                 VStack(spacing: 20) {
                     Image(systemName: "camera.fill").font(.system(size: 48))
@@ -77,11 +103,35 @@ struct ContentView: View {
                 .foregroundStyle(.white)
                 .padding(32)
             } else { ProgressView().tint(.white) }
+            if screenDimmer.isDimmed {
+                Button { screenDimmer.userInteracted() } label: {
+                    ZStack {
+                        Color.black
+                        VStack(spacing: 12) {
+                            Image(systemName: "video.fill")
+                            Text("Streaming over USB")
+                            Text("Tap to restore controls").font(.caption)
+                        }.foregroundStyle(.gray)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Streaming. Restore screen brightness and controls")
+                .ignoresSafeArea()
+            }
         }
+        .simultaneousGesture(TapGesture().onEnded { screenDimmer.userInteracted() })
+        .onAppear { updateScreenDimming() }
         .task { await checkPermission() }
         .onChange(of: scenePhase) { phase in
+            updateScreenDimming()
             if phase == .active { Task { await checkPermission() } }
         }
+        .onChange(of: connection.state) { _ in updateScreenDimming() }
+        .onChange(of: dimStreamingScreen) { _ in updateScreenDimming() }
+        .onChange(of: showStreamingPreview) { value in
+            DiagnosticLog.write("Streaming preview enabled=\(value)")
+        }
+        .onDisappear { screenDimmer.update(enabled: false) }
     }
 
     private var status: String {
@@ -100,9 +150,14 @@ struct ContentView: View {
         case .connected:
             return "Ready. Keep this app open and hold the phone sideways."
         case .streaming:
-            return "Keep this app open. The screen stays awake while streaming."
+            return dimStreamingScreen ? "Keep this app open. Tap the dimmed screen to restore controls."
+                : "Keep this app open. The screen stays awake while streaming."
         case .error(let message): return message
         }
+    }
+
+    private func updateScreenDimming() {
+        screenDimmer.update(enabled: dimStreamingScreen && connection.state == .streaming && scenePhase == .active)
     }
 
     @MainActor private func checkPermission() async {

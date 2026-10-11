@@ -24,7 +24,7 @@ final class VideoEncoder {
     // MARK: - Private (all accessed exclusively on encoderQueue)
 
     private var session:      VTCompressionSession?
-    private let encoderQueue  = DispatchQueue(label: "com.universalcam.videoencoder")
+    private let encoderQueue  = DispatchQueue(label: "com.universalcam.videoencoder", qos: .userInitiated)
     private var frameCount    = 0
     private let pendingLock = NSLock()
     private var pendingFrames = 0
@@ -224,39 +224,29 @@ private func outputCallback(
     guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
     let totalLength = CMBlockBufferGetDataLength(dataBuffer)
     guard totalLength > 0 else { return }
-    // A CMBlockBuffer may have several noncontiguous memory blocks.
-    var avcc = Data(count: totalLength)
-    let copyStatus = avcc.withUnsafeMutableBytes { bytes -> OSStatus in
-        guard let address = bytes.baseAddress else { return -1 }
-        return CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: address)
-    }
-    guard copyStatus == kCMBlockBufferNoErr else { return }
-
-    // Convert AVCC (length-prefixed) to Annex B (start-code prefixed)
-    var annexB = Data()
-
-    // Prepend SPS/PPS for keyframes
-    if isKeyframe, let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
-        annexB.append(annexBParameterSets(from: formatDesc))
-    }
-
-    var offset = 0
-    while offset + 4 <= totalLength {
-        // Read 4-byte AVCC length prefix (big-endian)
-        var nalLength: UInt32 = 0
-        _ = withUnsafeMutableBytes(of: &nalLength) { bytes in
-            avcc.copyBytes(to: bytes, from: offset..<(offset + 4))
+    // Usually VideoToolbox gives contiguous AVCC bytes. Read them in place;
+    // retain a copy only for the valid noncontiguous CMBlockBuffer case.
+    let parameterSets: Data
+    if isKeyframe, let format = CMSampleBufferGetFormatDescription(sampleBuffer) {
+        parameterSets = annexBParameterSets(from: format)
+    } else { parameterSets = Data() }
+    var contiguousLength = 0
+    var pointer: UnsafeMutablePointer<Int8>?
+    let pointerStatus = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0,
+        lengthAtOffsetOut: &contiguousLength, totalLengthOut: nil, dataPointerOut: &pointer)
+    let annexB: Data?
+    if pointerStatus == kCMBlockBufferNoErr, contiguousLength >= totalLength, let pointer {
+        annexB = makeAnnexB(UnsafeRawBufferPointer(start: pointer, count: totalLength), parameterSets: parameterSets)
+    } else {
+        var avcc = Data(count: totalLength)
+        let copyStatus = avcc.withUnsafeMutableBytes { bytes -> OSStatus in
+            guard let address = bytes.baseAddress else { return -1 }
+            return CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: address)
         }
-        nalLength = CFSwapInt32BigToHost(nalLength)
-        offset += 4
-        guard nalLength > 0, Int(nalLength) <= totalLength - offset else { return }
-        // Write Annex B start code
-        annexB.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
-        annexB.append(avcc.subdata(in: offset..<(offset + Int(nalLength))))
-        offset += Int(nalLength)
+        guard copyStatus == kCMBlockBufferNoErr else { return }
+        annexB = avcc.withUnsafeBytes { makeAnnexB($0, parameterSets: parameterSets) }
     }
-
-    guard offset == totalLength, !annexB.isEmpty else { return }
+    guard let annexB, !annexB.isEmpty else { return }
     let timestamp = CMTimeConvertScale(CMSampleBufferGetPresentationTimeStamp(sampleBuffer), timescale: 1_000_000, method: .default)
     guard timestamp.isValid else { return }
     let ptsUs = timestamp.value

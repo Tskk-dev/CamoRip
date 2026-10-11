@@ -3,7 +3,7 @@ import Foundation
 /// Small on-device log and per-stage frame counters for diagnosing slow streams.
 /// The Documents log is exposed in Files so it can be copied from the iPhone.
 enum DiagnosticLog {
-    enum Stage: String, CaseIterable { case captured, encodeDropped, encoded, usbSent, usbBackpressure }
+    enum Stage: String, CaseIterable { case captured, captureDropped, encodeDropped, encoded, usbSent, usbBackpressure }
     private static let lock = NSLock()
     private static var counts = Dictionary(uniqueKeysWithValues: Stage.allCases.map { ($0, 0) })
     private static let queue = DispatchQueue(label: "com.universalcam.diagnostics")

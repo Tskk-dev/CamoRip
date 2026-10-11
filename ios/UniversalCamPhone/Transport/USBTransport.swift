@@ -176,7 +176,8 @@ final class USBTransport {
     }
 
     private func makeFramePacket(_ frame: VideoEncoder.EncodedFrame) -> Data {
-        var packet = Data([0x01])
+        var packet = Data(capacity: frame.data.count + 14)
+        packet.append(0x01)
         var length = UInt32(frame.data.count).littleEndian
         var pts = frame.ptsUs.littleEndian
         withUnsafeBytes(of: &length) { packet.append(contentsOf: $0) }
