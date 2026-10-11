@@ -61,6 +61,17 @@ H.264 surface is copied as its valid 1920x1080 image, including the correct UV
 plane offset. This keeps normal 1080p publishing on the NV12 passthrough path
 instead of running a full-frame scalar resize.
 
+Windows now prefers D3D11 hardware H.264 decoding on the default graphics
+adapter. The companion shows **GPU accelerated** only after receiving a decoded
+DXGI texture; requesting acceleration alone is not counted as confirmation.
+NV12 textures are copied through a reusable staging texture into the existing
+camera channel, preserving the display aperture and physical UV-plane offset.
+This is hardware decoding with CPU readback, not an entirely GPU-resident path.
+If GPU initialization, format negotiation or readback fails, decoding falls back
+to software and waits for a keyframe when needed. The backend, adapter and
+fallback HRESULT are written to the Windows log. Hosted CI validates software
+fallback; GPU acceleration and sustained throughput need validation on the PC.
+
 ## Build
 
 Windows needs Visual Studio 2022 C++ tools, a Windows 11 SDK, CMake, .NET SDK 8 or newer, and Inno Setup 6 for installer packaging. From a Developer PowerShell:

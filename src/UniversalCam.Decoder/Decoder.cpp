@@ -1,6 +1,10 @@
 // Original implementation, licensed under the project's MIT license.
 // Uses the H.264 decoder included with Windows. No third-party codec is bundled.
 #include <windows.h>
+#include <d3d11.h>
+#include <d3d10.h>
+#include <dxgi.h>
+#include <cwchar>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mferror.h>
@@ -27,6 +31,14 @@ struct ComScope {
 struct Decoder {
     ComPtr<IMFTransform> transform;
     ComPtr<IMFMediaType> outputType;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    ComPtr<IMFDXGIDeviceManager> deviceManager;
+    ComPtr<ID3D11Texture2D> staging;
+    wchar_t adapterName[128] = L"unavailable";
+    HRESULT fallbackReason = S_OK;
+    bool hardwareConfirmed = false;
+    bool softwareOutput = false;
     // Keep the decoder output in NV12 all the way to the virtual camera. The
     // previous NV12 -> BGRA -> NV12 round trip was a pair of scalar 1080p
     // conversions on every frame and could reduce real-time capture to ~1 fps.
@@ -41,17 +53,67 @@ struct Decoder {
 
     ~Decoder() {
         if (transform) transform->ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
-        transform.Reset();
-        outputType.Reset();
+        ReleaseTransform();
         if (mfStarted) MFShutdown();
         if (mtaCookie) CoDecrementMTAUsage(mtaCookie);
     }
 
-    HRESULT Initialize() {
+    void ReleaseTransform() {
+        outputType.Reset();
+        transform.Reset();
+        staging.Reset();
+        deviceManager.Reset();
+        context.Reset();
+        device.Reset();
+        hardwareConfirmed = softwareOutput = false;
+        width = height = displayWidth = displayHeight = cropLeft = cropTop = 0;
+        stride = 0;
+        discontinuity = true;
+        previousSampleTime = -1;
+    }
+
+    HRESULT EnableHardware() {
+        ComPtr<IMFAttributes> attributes;
+        RETURN_IF_FAILED(transform->GetAttributes(&attributes));
+        UINT32 aware = FALSE;
+        RETURN_IF_FAILED(attributes->GetUINT32(MF_SA_D3D11_AWARE, &aware));
+        if (!aware) return MF_E_UNSUPPORTED_D3D_TYPE;
+        // A real graphics adapter is required. WARP would only move software
+        // decoding behind a graphics API and must not be reported as hardware.
+        RETURN_IF_FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+            D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context));
+        ComPtr<ID3D10Multithread> multithread;
+        RETURN_IF_FAILED(context.As(&multithread));
+        multithread->SetMultithreadProtected(TRUE);
+        ComPtr<IDXGIDevice> dxgiDevice;
+        ComPtr<IDXGIAdapter> adapter;
+        DXGI_ADAPTER_DESC description{};
+        if (SUCCEEDED(device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) &&
+            SUCCEEDED(adapter->GetDesc(&description)))
+            wcsncpy_s(adapterName, description.Description, _TRUNCATE);
+        UINT token = 0;
+        RETURN_IF_FAILED(MFCreateDXGIDeviceManager(&token, &deviceManager));
+        RETURN_IF_FAILED(deviceManager->ResetDevice(device.Get(), token));
+        return transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
+            reinterpret_cast<ULONG_PTR>(deviceManager.Get()));
+    }
+
+    HRESULT Initialize(bool preferHardware) {
         // Keep the COM MTA alive across Feed calls on different serialized pool threads.
         RETURN_IF_FAILED(CoIncrementMTAUsage(&mtaCookie));
         RETURN_IF_FAILED(MFStartup(MF_VERSION, MFSTARTUP_FULL));
         mfStarted = true;
+        if (preferHardware) {
+            const HRESULT hardware = ConfigureTransform(true);
+            if (SUCCEEDED(hardware)) return hardware;
+            fallbackReason = hardware;
+            ReleaseTransform();
+        }
+        return ConfigureTransform(false);
+    }
+
+    HRESULT ConfigureTransform(bool useHardware) {
         RETURN_IF_FAILED(CoCreateInstance(CLSID_CMSH264DecoderMFT, nullptr, CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&transform)));
         ComPtr<ICodecAPI> codec;
@@ -66,6 +128,7 @@ struct Decoder {
             value.ulVal = 2304;
             codec->SetValue(&CODECAPI_AVDecVideoMaxCodedHeight, &value);
         }
+        if (useHardware) RETURN_IF_FAILED(EnableHardware());
         ComPtr<IMFMediaType> input;
         RETURN_IF_FAILED(MFCreateMediaType(&input));
         RETURN_IF_FAILED(input->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
@@ -88,6 +151,7 @@ struct Decoder {
             if (FAILED(candidate->GetGUID(MF_MT_SUBTYPE, &subtype)) || subtype != MFVideoFormat_NV12) continue;
             RETURN_IF_FAILED(transform->SetOutputType(0, candidate.Get(), 0));
             outputType = candidate;
+            staging.Reset();
             // Initial placeholder dimensions may be absent. Read requires real dimensions.
             width = height = 0;
             MFGetAttributeSize(candidate.Get(), MF_MT_FRAME_SIZE, &width, &height);
@@ -152,35 +216,100 @@ struct Decoder {
         return submitted;
     }
 
+    HRESULT CopyNv12(const BYTE* pixels, size_t rowPitch, UINT32 surfaceHeight, size_t available) {
+        if (!pixels || rowPitch < width || surfaceHeight < height ||
+            available < rowPitch * (static_cast<size_t>(surfaceHeight) + surfaceHeight / 2))
+            return MF_E_BUFFERTOOSMALL;
+        const size_t yBytes = static_cast<size_t>(displayWidth) * displayHeight;
+        try { nv12.resize(yBytes + yBytes / 2); }
+        catch (...) { return E_OUTOFMEMORY; }
+        for (UINT32 row = 0; row < displayHeight; ++row)
+            memcpy(nv12.data() + static_cast<size_t>(row) * displayWidth,
+                pixels + static_cast<size_t>(row + cropTop) * rowPitch + cropLeft, displayWidth);
+        // A GPU texture can be larger than MF's coded size. Its physical height,
+        // not the display aperture or coded height, determines the UV-plane offset.
+        const BYTE* inputUv = pixels + rowPitch * surfaceHeight;
+        for (UINT32 row = 0; row < displayHeight / 2; ++row)
+            memcpy(nv12.data() + yBytes + static_cast<size_t>(row) * displayWidth,
+                inputUv + static_cast<size_t>(row + cropTop / 2) * rowPitch + cropLeft, displayWidth);
+        return S_OK;
+    }
+
+    HRESULT CopyGpuBuffer(IMFDXGIBuffer* buffer) {
+        if (!device || !context) return MF_E_UNSUPPORTED_D3D_TYPE;
+        ComPtr<ID3D11Texture2D> texture;
+        RETURN_IF_FAILED(buffer->GetResource(IID_PPV_ARGS(&texture)));
+        UINT subresource = 0;
+        RETURN_IF_FAILED(buffer->GetSubresourceIndex(&subresource));
+        D3D11_TEXTURE2D_DESC description{};
+        texture->GetDesc(&description);
+        if (description.Format != DXGI_FORMAT_NV12 || description.Width < width || description.Height < height ||
+            description.MipLevels != 1 || description.SampleDesc.Count != 1 ||
+            subresource >= description.ArraySize || (description.Height & 1))
+            return MF_E_INVALIDMEDIATYPE;
+        if (staging) {
+            D3D11_TEXTURE2D_DESC existing{};
+            staging->GetDesc(&existing);
+            if (existing.Width != description.Width || existing.Height != description.Height) staging.Reset();
+        }
+        if (!staging) {
+            description.ArraySize = description.MipLevels = 1;
+            description.Usage = D3D11_USAGE_STAGING;
+            description.BindFlags = description.MiscFlags = 0;
+            description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            RETURN_IF_FAILED(device->CreateTexture2D(&description, nullptr, &staging));
+        }
+        context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, texture.Get(), subresource, nullptr);
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        RETURN_IF_FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        const size_t available = static_cast<size_t>(mapped.RowPitch) * (description.Height + description.Height / 2);
+        const HRESULT copied = CopyNv12(static_cast<const BYTE*>(mapped.pData), mapped.RowPitch, description.Height, available);
+        context->Unmap(staging.Get(), 0);
+        RETURN_IF_FAILED(copied);
+        hardwareConfirmed = true;
+        softwareOutput = false;
+        return S_OK;
+    }
+
     HRESULT Convert(IMFSample* sample, int64_t* timestamp) {
         if (!width || !height || width > 4096 || height > 2304 || (width & 1) || (height & 1) || stride < static_cast<LONG>(width))
             return MF_E_INVALIDMEDIATYPE;
         ComPtr<IMFMediaBuffer> buffer;
-        RETURN_IF_FAILED(sample->ConvertToContiguousBuffer(&buffer));
-        DWORD currentLength = 0;
-        BYTE* pixels = nullptr;
-        RETURN_IF_FAILED(buffer->Lock(&pixels, nullptr, &currentLength));
-        // NV12 has a full-height Y plane followed by a half-height interleaved UV plane.
-        const size_t ySize = static_cast<size_t>(stride) * height;
-        const size_t required = ySize + static_cast<size_t>(stride) * (height / 2);
-        if (currentLength < required) { buffer->Unlock(); return MF_E_BUFFERTOOSMALL; }
-        const size_t yBytes = static_cast<size_t>(displayWidth) * displayHeight;
-        const size_t frameBytes = yBytes + yBytes / 2;
-        try { nv12.resize(frameBytes); }
-        catch (...) { buffer->Unlock(); return E_OUTOFMEMORY; }
-        for (UINT32 row = 0; row < displayHeight; ++row) {
-            memcpy(nv12.data() + static_cast<size_t>(row) * displayWidth,
-                pixels + static_cast<size_t>(row + cropTop) * stride + cropLeft, displayWidth);
+        RETURN_IF_FAILED(sample->GetBufferByIndex(0, &buffer));
+        ComPtr<IMFDXGIBuffer> gpuBuffer;
+        if (SUCCEEDED(buffer.As(&gpuBuffer))) {
+            RETURN_IF_FAILED(CopyGpuBuffer(gpuBuffer.Get()));
+        } else {
+            RETURN_IF_FAILED(sample->ConvertToContiguousBuffer(&buffer));
+            DWORD currentLength = 0;
+            BYTE* pixels = nullptr;
+            RETURN_IF_FAILED(buffer->Lock(&pixels, nullptr, &currentLength));
+            const HRESULT copied = CopyNv12(pixels, static_cast<size_t>(stride), height, currentLength);
+            buffer->Unlock();
+            RETURN_IF_FAILED(copied);
+            softwareOutput = true;
+            hardwareConfirmed = false;
         }
-        const BYTE* inputUv = pixels + ySize;
-        BYTE* outputUv = nv12.data() + yBytes;
-        for (UINT32 row = 0; row < displayHeight / 2; ++row)
-            memcpy(outputUv + static_cast<size_t>(row) * displayWidth,
-                inputUv + static_cast<size_t>(row + cropTop / 2) * stride + cropLeft, displayWidth);
-        buffer->Unlock();
         LONGLONG sampleTime = 0;
         RETURN_IF_FAILED(sample->GetSampleTime(&sampleTime));
         *timestamp = sampleTime / 10;
+        return S_OK;
+    }
+
+    HRESULT FallBackToSoftware(HRESULT reason) {
+        if (!deviceManager) return S_FALSE;
+        fallbackReason = reason;
+        if (transform) transform->ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+        ReleaseTransform();
+        return ConfigureTransform(false);
+    }
+
+    HRESULT GetStatus(wchar_t* text, int capacity) const {
+        if (!text || capacity < 512) return E_INVALIDARG;
+        const wchar_t* mode = !deviceManager ? L"software" : hardwareConfirmed ? L"D3D11 hardware confirmed" :
+            softwareOutput ? L"software output (D3D11 requested)" : L"D3D11 requested; awaiting decoded surface";
+        swprintf_s(text, static_cast<size_t>(capacity), L"%ls; adapter=%ls; fallback HRESULT=0x%08X",
+            mode, adapterName, static_cast<unsigned>(fallbackReason));
         return S_OK;
     }
 
@@ -227,17 +356,33 @@ struct Decoder {
 };
 }
 
-extern "C" __declspec(dllexport) HRESULT __cdecl UCamDecoderCreate(void** handle) noexcept {
+extern "C" __declspec(dllexport) HRESULT __cdecl UCamDecoderCreateWithOptions(int preferHardware, void** handle) noexcept {
     if (!handle) return E_POINTER;
     *handle = nullptr;
     ComScope apartment;
     if (FAILED(apartment.Check())) return apartment.Check();
     try {
         auto decoder = std::make_unique<Decoder>();
-        RETURN_IF_FAILED(decoder->Initialize());
+        RETURN_IF_FAILED(decoder->Initialize(preferHardware != 0));
         *handle = decoder.release();
         return S_OK;
     } catch (...) { return E_OUTOFMEMORY; }
+}
+
+extern "C" __declspec(dllexport) HRESULT __cdecl UCamDecoderCreate(void** handle) noexcept {
+    return UCamDecoderCreateWithOptions(1, handle);
+}
+
+extern "C" __declspec(dllexport) HRESULT __cdecl UCamDecoderFallBackToSoftware(void* handle, HRESULT reason) noexcept {
+    if (!handle) return E_POINTER;
+    ComScope apartment;
+    if (FAILED(apartment.Check())) return apartment.Check();
+    return static_cast<Decoder*>(handle)->FallBackToSoftware(reason);
+}
+
+extern "C" __declspec(dllexport) HRESULT __cdecl UCamDecoderGetStatus(void* handle, wchar_t* text, int capacity) noexcept {
+    if (!handle) return E_POINTER;
+    return static_cast<Decoder*>(handle)->GetStatus(text, capacity);
 }
 
 extern "C" __declspec(dllexport) HRESULT __cdecl UCamDecoderSubmit(void* handle, const uint8_t* bytes, int length, int64_t timestamp, int keyframe) noexcept {

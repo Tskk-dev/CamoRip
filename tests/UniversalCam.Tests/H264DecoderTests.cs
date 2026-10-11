@@ -9,6 +9,37 @@ namespace UniversalCam.Tests;
 /// </summary>
 public class H264DecoderTests
 {
+    [Fact]
+    public void SoftwareMode_DecodesAndReportsSoftwareWithoutRequestingD3D11()
+    {
+        using var decoder = new H264Decoder(preferHardware: false);
+        var frames = new List<DecodedFrame>();
+        var statuses = new List<string>();
+        decoder.FrameDecoded += (_, frame) => frames.Add(frame);
+        decoder.BackendChanged += (_, status) => statuses.Add(status);
+        var bitstream = BlackIdrFixture.Create();
+        for (var index = 0; index < 3; index++) decoder.Feed(Video(bitstream));
+        Assert.NotEmpty(frames);
+        Assert.StartsWith("software;", decoder.BackendStatus);
+        Assert.Contains("fallback HRESULT=0x00000000", decoder.BackendStatus);
+        Assert.NotEmpty(statuses);
+        Assert.All(statuses, status => Assert.StartsWith("software;", status));
+    }
+
+    [Fact]
+    public void AutomaticMode_ReportsActualOutputBackendAfterDecoding()
+    {
+        using var decoder = new H264Decoder();
+        var frames = 0;
+        decoder.FrameDecoded += (_, _) => frames++;
+        var bitstream = BlackIdrFixture.Create(1920, 1080, 77);
+        for (var index = 0; index < 3; index++) decoder.Feed(Video(bitstream));
+        Assert.True(frames > 0);
+        Assert.True(decoder.BackendStatus.StartsWith("D3D11 hardware confirmed;") ||
+            decoder.BackendStatus.StartsWith("software"), decoder.BackendStatus);
+        Assert.DoesNotContain("awaiting decoded surface", decoder.BackendStatus);
+    }
+
     private static MediaFrame Video(byte[] payload, bool keyframe = true, long timestamp = 1_000_000) =>
         new(new FrameHeader(FrameHeader.StreamTypeVideo, (uint)payload.Length, timestamp, keyframe ? (byte)1 : (byte)0), payload);
 
