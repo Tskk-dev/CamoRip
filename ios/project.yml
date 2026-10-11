@@ -39,8 +39,8 @@ targets:
       properties:
         CFBundleName: UniversalCam
         CFBundleDisplayName: CamoRip
-        CFBundleVersion: "3"
-        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "4"
+        CFBundleShortVersionString: "0.3.0"
         UILaunchStoryboardName: ""
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

@@ -173,7 +173,7 @@ final class VideoEncoder {
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime,          value: kCFBooleanTrue)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
         // Main profile supports CABAC for better compression (Baseline does not)
-        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,      value: kVTProfileLevel_H264_Main_AutoLevel)
+        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,      value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate,    value: NSNumber(value: bitrate))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: fps * 2))

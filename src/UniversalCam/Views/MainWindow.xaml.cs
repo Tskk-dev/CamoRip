@@ -3,6 +3,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using UniversalCam.Core.Protocol;
 using UniversalCam.Core.Transport;
+using UniversalCam.Core.Video;
 
 namespace UniversalCam.Views;
 
@@ -14,6 +15,8 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _commands;
     private readonly Dictionary<string, Slider> _sliders;
     private CameraState? _state;
+    private bool _updatingModes;
+    private readonly HashSet<Slider> _editingSliders = new();
     private bool _ready, _updating, _exiting, _hidden, _fullscreen, _sending;
     private long _requestId, _confirmedId, _lastSent, _timedOutId = -1;
     private bool _switching;
@@ -29,6 +32,13 @@ public sealed partial class MainWindow : Window
         SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
         _sliders = new() { ["exposure_bias"] = ExposureBias, ["iso"] = Iso, ["shutter_ms"] = Shutter,
             ["focus"] = Focus, ["temperature"] = Temperature, ["tint"] = Tint, ["torch_level"] = TorchLevel };
+        foreach (var slider in _sliders.Values)
+        {
+            slider.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _editingSliders.Add(slider)), true);
+            slider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _editingSliders.Remove(slider)), true);
+            slider.PointerCaptureLost += (_, _) => _editingSliders.Remove(slider);
+        }
+        _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(RefreshModes);
         var settings = App.Settings;
         CloseToTray.IsOn = settings.CloseToTray; StartMinimized.IsOn = settings.StartMinimized;
         LaunchAtSignIn.IsOn = settings.LaunchAtSignIn; Logging.IsOn = settings.Logging;
@@ -95,17 +105,74 @@ public sealed partial class MainWindow : Window
             ConnectionNotice.IsOpen = true;
         }
     }
+    internal void CheckControls()
+    {
+        // Functional regression runs in an isolated process without USB or settings writes.
+        var state = new CameraState { CameraId = "check", TorchAvailable = true, TorchOn = true,
+            CaptureModes = VideoMode.Choices.ToList(),
+            Ranges = new() { ["torch_level"] = new() { Min = 0.01, Max = 1 } },
+            Values = new() { ["torch_level"] = 0.5 } };
+        ApplyState(state);
+        for (int i = 0; i < 100; ++i)
+        {
+            TorchLevel.Value = 0.01 + i / 100.0;
+            ApplyState(state with { Values = new() { ["torch_level"] = i / 100.0 } });
+        }
+        ApplyState(state with { Ranges = new() { ["torch_level"] = new() { Min = 1, Max = 0 } } });
+        if (TorchLevel.IsEnabled) throw new InvalidOperationException("Invalid torch range was accepted.");
+        ApplyState(state with { CaptureModes = [new(1280, 720, 30)], TorchAvailable = false });
+        if (CaptureMode.Items.Count != 1) throw new InvalidOperationException("Front camera modes were not filtered.");
+        ApplyState(state);
+        if (CaptureMode.Items.Count != 5) throw new InvalidOperationException("Capture mode bindings failed.");
+        _state = null; RefreshModes();
+        App.Log("INFO", "Control check passed: torch slider changes, acknowledgements, invalid range, and mode bindings.");
+    }
+
     private void Refresh()
     {
         foreach (var (key, value) in _service.Status)
             if (Root.FindName(key) is TextBlock text) text.Text = value;
-        StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected;
+        StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected && !_service.ChangingMode;
         StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
         if (_service.Streaming) ConnectionNotice.IsOpen = false;
         if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }
         UpdateEnabled();
+        RefreshModes();
         UpdatePreviewVisibility();
     }
+    private void RefreshModes()
+    {
+        if (CaptureMode is null) return;
+        var modes = (_state?.CaptureModes ?? []).Where(VideoMode.Choices.Contains).Distinct().ToArray();
+        var selected = VideoMode.Parse(_service.Connection.CaptureResolution, _service.Connection.CaptureFrameRate)
+            ?? VideoMode.Parse(App.Settings.CaptureResolution, App.Settings.CaptureFps);
+        _updatingModes = true;
+        try
+        {
+            var existing = CaptureMode.ItemsSource as VideoMode[];
+            if (existing is null || !existing.SequenceEqual(modes)) CaptureMode.ItemsSource = modes;
+            CaptureMode.SelectedItem = modes.FirstOrDefault(m => m == selected);
+            CaptureMode.IsEnabled = _service.Connected && !_service.ChangingMode && !_switching && modes.Length > 0;
+            CaptureModeHint.Text = _service.ChangingMode ? "Changing video mode…" : modes.Length == 0
+                ? "Connect the updated iPhone app to choose a video mode."
+                : "Changing mode restarts the webcam. Your video app may need to reopen it.";
+        }
+        finally { _updatingModes = false; }
+    }
+    private async void OnCaptureMode(object sender, SelectionChangedEventArgs args)
+    {
+        if (!_ready || _updatingModes || CaptureMode.SelectedItem is not VideoMode mode) return;
+        if (mode == VideoMode.Parse(_service.Connection.CaptureResolution, _service.Connection.CaptureFrameRate)) return;
+        _pending.Clear();
+        try
+        {
+            await _service.SetVideoModeAsync(mode);
+            App.Settings.CaptureResolution = mode.Resolution; App.Settings.CaptureFps = mode.Fps; SaveSettings();
+        }
+        catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
+        finally { RefreshModes(); }
+    }
+
     private void UpdatePreviewVisibility()
     {
         _service.PreviewVisible = !_exiting && !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
@@ -163,12 +230,16 @@ public sealed partial class MainWindow : Window
     private void OnWhiteBalanceMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_white_balance", AutoWhiteBalance.IsOn ? 1 : 0); UpdateEnabled(); } }
     private void OnTorch(object sender, RoutedEventArgs e) => Queue("torch_on", Torch.IsOn ? 1 : 0);
     private void OnTorchLevel(object sender, RangeBaseValueChangedEventArgs e)
-    { if (TorchLevel is not null) TorchLevel.Header = $"Torch brightness · {e.NewValue:P0}"; Queue("torch_level", e.NewValue); }
+    {
+        // Keep Slider.Header stable while WinUI handles thumb and tooltip events.
+        if (TorchValue is not null) TorchValue.Text = $"{e.NewValue:P0}";
+        Queue("torch_level", e.NewValue);
+    }
     internal void ToggleTorch() { if (_state?.TorchAvailable == true && _service.Streaming) Queue("torch_on", _state.TorchOn ? 0 : 1); }
     private void OnReset(object sender, RoutedEventArgs e) { _pending.Clear(); Queue("reset", 1); }
     private void Queue(string key, double value)
     {
-        if (!_ready || _updating || _state is null || !_service.Connected) return;
+        if (!_ready || _updating || _state is null || !_service.Connected || !double.IsFinite(value)) return;
         _pending[key] = value; ControlStatus.Text = "Applying on iPhone…";
     }
     private async Task FlushCommands()
@@ -184,12 +255,14 @@ public sealed partial class MainWindow : Window
         }
         var request = new CameraSettings { RequestId = ++_requestId, CameraId = _state.CameraId, Values = new(_pending) };
         _pending.Clear(); _sending = true; _lastSent = Stopwatch.GetTimestamp();
+        App.Log("CONTROL", $"Sending camera settings #{request.RequestId}: {string.Join(", ", request.Values.Select(v => $"{v.Key}={v.Value:G6}"))}");
         try { await _service.Connection.SetCameraSettingsAsync(request); }
         catch (Exception ex) { ControlStatus.Text = ex.Message; App.Log(ex); }
         finally { _sending = false; }
     }
     private void ApplyState(CameraState state)
     {
+        if (state.RequestId > 0) App.Log("CONTROL", $"Received camera settings #{state.RequestId}: torch={state.TorchOn}, level={state.Values.GetValueOrDefault("torch_level"):G6}, error={state.Error ?? "none"}");
         if (_switching || state.IsStaleComparedTo(_requestId)) return;
         if (string.IsNullOrEmpty(state.CameraId))
         { _state = null; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false; return; }
@@ -199,8 +272,17 @@ public sealed partial class MainWindow : Window
         {
             foreach (var (key, slider) in _sliders)
             {
-                if (state.Ranges.TryGetValue(key, out var range)) { slider.Minimum = range.Min; slider.Maximum = Math.Max(range.Min, range.Max); }
-                if (_pending.Count == 0 && (state.RequestId == 0 && (_requestId == _confirmedId || _requestId == _timedOutId) || state.RequestId >= _requestId) && state.Values.TryGetValue(key, out var value)) slider.Value = value;
+                if (_editingSliders.Contains(slider)) continue;
+                if (state.Ranges.TryGetValue(key, out var range) && range.IsValid)
+                {
+                    // Expand before shrinking so neither setter creates an inverted range.
+                    if (range.Max > slider.Maximum) slider.Maximum = range.Max;
+                    if (range.Min < slider.Minimum) slider.Minimum = range.Min;
+                    if (slider.Maximum != range.Max) slider.Maximum = range.Max;
+                    if (slider.Minimum != range.Min) slider.Minimum = range.Min;
+                }
+                if (_pending.Count == 0 && (state.RequestId == 0 && (_requestId == _confirmedId || _requestId == _timedOutId) || state.RequestId >= _requestId) && state.Values.TryGetValue(key, out var value) && double.IsFinite(value))
+                    slider.Value = Math.Clamp(value, slider.Minimum, slider.Maximum);
             }
             if (_pending.Count == 0 && (state.RequestId >= _requestId || _confirmedId == _requestId || _timedOutId == _requestId))
             {
@@ -213,14 +295,15 @@ public sealed partial class MainWindow : Window
             if (state.Error is not null) ControlStatus.Text = state.Error;
             else if (_pending.Count == 0 && _requestId == _confirmedId) ControlStatus.Text = "Confirmed by iPhone";
             Adjustments.IsEnabled = _service.Connected;
-            UpdateEnabled();
+            UpdateEnabled(); RefreshModes();
         }
         finally { _updating = false; }
     }
     private void UpdateEnabled()
     {
         if (_state is null) return;
-        foreach (var (key, slider) in _sliders) slider.IsEnabled = _state.Ranges.ContainsKey(key);
+        foreach (var (key, slider) in _sliders)
+            if (!_editingSliders.Contains(slider)) slider.IsEnabled = _state.Ranges.TryGetValue(key, out var range) && range.IsValid;
         AutoExposure.IsEnabled = _state.AutoExposureSupported && _state.Ranges.ContainsKey("iso");
         AutoFocus.IsEnabled = _state.AutoFocusSupported && _state.Ranges.ContainsKey("focus");
         AutoWhiteBalance.IsEnabled = _state.AutoWhiteBalanceSupported && _state.Ranges.ContainsKey("temperature");
@@ -229,7 +312,7 @@ public sealed partial class MainWindow : Window
         Focus.IsEnabled &= !AutoFocus.IsOn;
         Temperature.IsEnabled &= !AutoWhiteBalance.IsOn; Tint.IsEnabled &= !AutoWhiteBalance.IsOn;
         Torch.IsEnabled = _state.TorchAvailable && _service.Streaming;
-        TorchLevel.IsEnabled = Torch.IsEnabled && _state.TorchOn && _state.Ranges.ContainsKey("torch_level");
+        if (!_editingSliders.Contains(TorchLevel)) TorchLevel.IsEnabled = Torch.IsEnabled && _state.TorchOn && _state.Ranges.TryGetValue("torch_level", out var torchRange) && torchRange.IsValid;
     }
     private void OnPreviewOptions(object sender, object e)
     {

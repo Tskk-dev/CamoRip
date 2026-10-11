@@ -3,15 +3,15 @@
 #include <propvarutil.h>
 
 using GetClassObject = HRESULT (__stdcall*)(REFCLSID, REFIID, void**);
-using OpenWriter = HRESULT (__stdcall*)(LPCWSTR, void**);
+using OpenWriter = HRESULT (__stdcall*)(LPCWSTR, DWORD, DWORD, void**);
 using WriteFrame = HRESULT (__stdcall*)(void*, const BYTE*, DWORD, LONGLONG);
 using CloseWriter = void (__stdcall*)(void*);
 
 // Exercises the actual DLL through its COM factory without registering a camera
 // or changing registry state. Runs on the Windows runner with desktop MF installed.
-HRESULT Verify(HMODULE module) {
+HRESULT Verify(HMODULE module, NativeFormat format) {
     auto getFactory = reinterpret_cast<GetClassObject>(GetProcAddress(module, "DllGetClassObject"));
-    auto openWriter = reinterpret_cast<OpenWriter>(GetProcAddress(module, "UCamOpenWriter"));
+    auto openWriter = reinterpret_cast<OpenWriter>(GetProcAddress(module, "UCamOpenWriterMode"));
     auto writeFrame = reinterpret_cast<WriteFrame>(GetProcAddress(module, "UCamWriteFrame"));
     auto closeWriter = reinterpret_cast<CloseWriter>(GetProcAddress(module, "UCamCloseWriter"));
     if (!getFactory || !openWriter || !writeFrame || !closeWriter) return E_NOINTERFACE;
@@ -19,14 +19,16 @@ HRESULT Verify(HMODULE module) {
     if (!GetTempPathW(ARRAYSIZE(temporary), temporary)) return HRESULT_FROM_WIN32(GetLastError());
     std::wstring path = std::wstring(temporary) + L"UCamProviderSmoke-" + std::to_wstring(GetCurrentProcessId()) + L"\\stream.bin";
     struct WriterGuard { void* value = nullptr; CloseWriter close; ~WriterGuard() { if (value) close(value); } } writer{nullptr, closeWriter};
-    CHECK_HR(openWriter(path.c_str(), &writer.value));
-    std::vector<BYTE> pixels(FrameBytes, 128);
-    CHECK_HR(writeFrame(writer.value, pixels.data(), FrameBytes, 12345));
+    CHECK_HR(openWriter(path.c_str(), format.width, format.height, &writer.value));
+    std::vector<BYTE> pixels(format.Bytes(), 128);
+    CHECK_HR(writeFrame(writer.value, pixels.data(), format.Bytes(), 12345));
     ComPtr<IClassFactory> factory;
     CHECK_HR(getFactory(CLSID_UniversalCam, IID_PPV_ARGS(&factory)));
     ComPtr<IMFActivate> activation;
     CHECK_HR(factory->CreateInstance(nullptr, IID_PPV_ARGS(&activation)));
     CHECK_HR(activation->SetString(UCAM_FRAME_PATH, path.c_str()));
+    CHECK_HR(MFSetAttributeSize(activation.Get(), UCAM_FRAME_SIZE, format.width, format.height));
+    CHECK_HR(activation->SetUINT32(UCAM_FRAME_RATE, format.fps));
     ComPtr<IMFMediaSource> closedSource;
     CHECK_HR(activation->ActivateObject(IID_PPV_ARGS(&closedSource)));
     CHECK_HR(activation->ShutdownObject());
@@ -50,7 +52,7 @@ HRESULT Verify(HMODULE module) {
     CHECK_HR(type->GetGUID(MF_MT_SUBTYPE, &subtype));
     CHECK_HR(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height));
     CHECK_HR(MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, &rate, &denominator));
-    if (!selected || width != FrameWidth || height != FrameHeight || rate != 60 || denominator != 1 || subtype != MFVideoFormat_NV12) return MF_E_INVALIDMEDIATYPE;
+    if (!selected || width != format.width || height != format.height || rate != format.fps || denominator != 1 || subtype != MFVideoFormat_NV12) return MF_E_INVALIDMEDIATYPE;
     PROPVARIANT position{};
     CHECK_HR(source->Start(presentation.Get(), nullptr, &position));
     ComPtr<IMFMediaStream> stream;
@@ -67,7 +69,7 @@ HRESULT Verify(HMODULE module) {
     if (!stream) return E_UNEXPECTED;
     LONGLONG previousTime = -1;
     for (int index = 0; index != 24; ++index) {
-        if (index < 16) CHECK_HR(writeFrame(writer.value, pixels.data(), FrameBytes, index * 33333));
+        if (index < 16) CHECK_HR(writeFrame(writer.value, pixels.data(), format.Bytes(), index * 33333));
         if (index == 16) { closeWriter(writer.value); writer.value = nullptr; }
         const bool hasToken = index % 3 != 1;
         ComPtr<IMFAttributes> token;
@@ -97,7 +99,7 @@ HRESULT Verify(HMODULE module) {
             if (discontinuity != static_cast<UINT32>(index == 0 || index == 16)) return E_UNEXPECTED;
             LONGLONG time, duration; CHECK_HR(sample->GetSampleTime(&time)); CHECK_HR(sample->GetSampleDuration(&duration));
             DWORD length = 0; CHECK_HR(sample->GetTotalLength(&length));
-            if (time <= previousTime || duration != FrameDuration || length != FrameBytes) return E_UNEXPECTED;
+            if (time <= previousTime || duration != format.Duration() || length != format.Bytes()) return E_UNEXPECTED;
             previousTime = time;
             ComPtr<IMFMediaBuffer> buffer; CHECK_HR(sample->ConvertToContiguousBuffer(&buffer));
             BYTE* data = nullptr; CHECK_HR(buffer->Lock(&data, nullptr, nullptr));
@@ -122,13 +124,18 @@ int wmain(int argc, wchar_t** argv) {
     hr = MFStartup(MF_VERSION);
     if (SUCCEEDED(hr)) {
         HMODULE module = LoadLibraryW(argv[1]);
-        hr = module ? Verify(module) : HRESULT_FROM_WIN32(GetLastError());
+        hr = module ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+        for (const NativeFormat format : {NativeFormat{1280,720,30}, NativeFormat{1280,720,60}, NativeFormat{1920,1080,30}, NativeFormat{1920,1080,60}, NativeFormat{3840,2160,30}}) {
+            if (FAILED(hr)) break;
+            hr = Verify(module, format);
+            std::cout << "Mode " << format.width << 'x' << format.height << '@' << format.fps << ": 0x" << std::hex << static_cast<unsigned long>(hr) << std::dec << '\n';
+        }
         if (module) FreeLibrary(module);
         MFShutdown();
     }
     CoUninitialize();
     if (FAILED(hr)) { std::cerr << "Provider smoke test failed: 0x" << std::hex << static_cast<unsigned long>(hr) << '\n'; return 1; }
-    std::cout << "Provider source: NV12 1080p60, 24 samples, shared frames, closed-writer placeholder, recycled/null tokens, timestamps, restart, shutdown passed.\n";
+    std::cout << "Provider source: NV12 720p30/60, 1080p30/60, 4K30, 24 samples, shared frames, closed-writer placeholder, recycled/null tokens, timestamps, restart, shutdown passed.\n";
     return 0;
 }
 

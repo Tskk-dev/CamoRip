@@ -124,6 +124,44 @@ public class ConnectionManagerTests
         await server;
     }
 
+    [Fact]
+    public async Task ReconfigureStreamingPhoneResumesAndIgnoresOldAcknowledgement()
+    {
+        using var service = new FakeAppleService();
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(service.Port), TimeSpan.FromSeconds(1)));
+        var resumed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acknowledgements = new List<string>();
+        manager.StateChanged += (_, state) => { if (state == TransportState.Connected) _ = manager.ConfigureAsync(); };
+        manager.ConfigurationAcknowledged += (_, ack) => acknowledgements.Add(ack.Resolution);
+        var starts = 0;
+        manager.StreamStateChanged += (_, streaming) => {
+            if (streaming && Interlocked.Increment(ref starts) == 1) _ = manager.ConfigureAsync("3840x2160", 30, bitrate: 20_000_000);
+            else if (streaming) resumed.TrySetResult(true);
+        };
+        var server = Task.Run(async () => {
+            await DiscoveryAsync(service);
+            await service.ServeOnceAsync(async (_, stream) => {
+                await FakeAppleService.ReplyAsync(stream, "<key>MessageType</key><string>Result</string><key>Number</key><integer>0</integer>");
+                Assert.IsType<Welcome>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new Hello { Capabilities = ["h264"] });
+                var first = Assert.IsType<Configure>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new ConfigureAck { RequestId = first.RequestId, Resolution = first.Resolution, Fps = first.Fps });
+                Assert.IsType<StartStream>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new StartStream());
+                var second = Assert.IsType<Configure>(await ReadControlAsync(stream));
+                Assert.Equal("3840x2160", second.Resolution); Assert.True(second.RequestId > first.RequestId);
+                await SendControlAsync(stream, new ConfigureAck { RequestId = first.RequestId, Resolution = first.Resolution, Fps = first.Fps });
+                await SendControlAsync(stream, new ConfigureAck { RequestId = second.RequestId, Resolution = second.Resolution, Fps = second.Fps });
+                Assert.IsType<StartStream>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new StartStream());
+                await resumed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await AssertNoControlAsync(stream);
+            });
+        });
+        await manager.StartAsync(); await server;
+        Assert.Equal(new[] { "1920x1080", "3840x2160" }, acknowledgements);
+    }
+
     private static async Task DiscoveryAsync(FakeAppleService service)
     {
         await service.ServeOnceAsync((_, stream) => FakeAppleService.ReplyAsync(stream, """

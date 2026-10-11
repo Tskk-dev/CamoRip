@@ -20,7 +20,7 @@ See [CamoRip architecture and validation status](docs/CAMORIP.md).
 - iPhone 6s Plus running iOS 15.x, a data-capable Lightning cable, and camera permission.
 - An existing jailbreak-compatible signing/install route, or a free Apple ID signing tool. The CI IPA is unsigned and is not automatically installable on every jailbreak.
 
-The main target is rear camera 1920×1080 at 60 fps. The app reports the actual capture format and frame rate; the front camera can use a lower resolution and frame rate. Windows produces a fixed 1080p60 webcam output and repeats frames when the selected iPhone camera runs slower.
+Choose 720p30/60, 1080p30/60, or 4K30 in Camera → Resolution and frame rate. Only modes reported by the active iPhone camera appear. Update both apps to 0.3.0 for the selector. Capture and Windows webcam dimensions/rate follow the acknowledged mode. Changing mode restarts the webcam; a meeting app holding its old format may need to reopen the camera. The last requested mode is saved; front cameras may negotiate a smaller mode. 4K increases decoder, memory and thermal load. Physical 4K30 operation remains to be validated.
 
 ## Install and use
 

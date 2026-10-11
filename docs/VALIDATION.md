@@ -129,3 +129,23 @@ an unattached composition swap chain and does not establish actual WinUI display
 rate or meeting-app performance. Native shader tests use WARP solely on hosted CI;
 the shipped renderer requests hardware and reports failure rather than silently
 calling software rendering hardware acceleration.
+
+## 0.3.0 resolution selector and Windows torch investigation
+
+- Local managed tests: 104 passed, 0 failed (including 4K catalog, wire round trip,
+  saved capture preference, invalid control ranges, live reconfiguration restart,
+  and ignoring a superseded configuration acknowledgement).
+- Local WinUI self-contained publish succeeded. CI checks all five native source
+  modes, selected mode byte lengths/timing, and channel cache resizing.
+- Windows Event Log contains two 0.2.1 crashes in ucrtbase.dll with 0xc0000409,
+  fast-fail parameter 5. These records lack a call stack; root cause is unconfirmed.
+  Torch Header stays stable, active slider drags are protected against incoming
+  range/value changes, ranges/values are validated and clamped, and control
+  send/ack details now respect the existing optional diagnostic logging setting.
+- A functional startup check exercises torch values/acknowledgements and mode
+  bindings without USB. This is not evidence that the reported native crash is
+  fixed during physical dragging/streaming. A local ProcDump session is capturing
+  the installed application's next native failure for diagnosis.
+- New IPA installation, sustained 4K30 USB, physical mode changes, torch crash
+  reproduction after changes and meeting-app format reopening remain unverified.
+- User waived visual UI validation; no visual inspection is required.

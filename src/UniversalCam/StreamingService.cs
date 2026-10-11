@@ -27,6 +27,7 @@ internal sealed class StreamingService : IAsyncDisposable
     private Task? _decodeTask, _cameraTask, _metricsTask;
 
 
+    private readonly SemaphoreSlim _modeChange = new(1, 1);
     private bool _streaming;
     private volatile bool _closing;
     private bool _closed;
@@ -92,8 +93,13 @@ internal sealed class StreamingService : IAsyncDisposable
         };
         _connection.Diagnostic += (_, message) => Ui(() => SetStatus("Diagnostic", message));
         _connection.Diagnostic += (_, message) => App.Log("INFO", $"Connection: {message}");
-        _connection.ConfigurationAcknowledged += (_, configuration) => Ui(() =>
-            SetStatus("VideoStatus", $"Capture: {configuration.Resolution} at {configuration.Fps} fps · Webcam: 1080p60"));
+        _connection.ConfigurationAcknowledged += (_, configuration) =>
+        {
+            var mode = VideoMode.Parse(configuration.Resolution, configuration.Fps)!;
+            _frames.Reset("capture mode changed");
+            _camera?.SetMode(mode);
+            Ui(() => SetStatus("VideoStatus", $"Capture: {mode} · Webcam: {(_camera?.IsAvailable == true ? mode.ToString() : "unavailable")}"));
+        };
         _connection.ConfigurationAcknowledged += (_, configuration) => App.Log("INFO", $"Capture configured: {configuration.Resolution} at {configuration.Fps} fps.");
         _connection.StreamStateChanged += (_, streaming) =>
         {
@@ -146,8 +152,35 @@ internal sealed class StreamingService : IAsyncDisposable
 
     private async Task ConfigurePhone()
     {
-        try { await _connection.ConfigureAsync("1920x1080", 60, "h264", 12_000_000); }
+        try { await SetVideoModeAsync(VideoMode.Parse(App.Settings.CaptureResolution, App.Settings.CaptureFps) ?? VideoMode.Default); }
         catch (Exception ex) { Ui(() => SetStatus("Diagnostic", ex.Message)); App.Log(ex); }
+    }
+
+    public bool ChangingMode { get; private set; }
+    public async Task SetVideoModeAsync(VideoMode mode)
+    {
+        await _modeChange.WaitAsync();
+        var confirmed = new TaskCompletionSource<ConfigureAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Ack(object? sender, ConfigureAck ack) => confirmed.TrySetResult(ack);
+        void Failed(object? sender, string error) => confirmed.TrySetException(new IOException(error));
+        void Disconnected(object? sender, TransportState state)
+        { if (state != TransportState.Connected) confirmed.TrySetException(new IOException("USB connection interrupted while changing video mode.")); }
+        try
+        {
+            if (!Connected) throw new InvalidOperationException("Connect the iPhone before changing video mode.");
+            ChangingMode = true; Changed?.Invoke();
+            _connection.ConfigurationAcknowledged += Ack;
+            _connection.Failure += Failed; _connection.StateChanged += Disconnected;
+            App.Log("INFO", $"Requesting capture mode: {mode}.");
+            await _connection.ConfigureAsync(mode.Resolution, mode.Fps, "h264", mode.Bitrate);
+            await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            _connection.ConfigurationAcknowledged -= Ack;
+            _connection.Failure -= Failed; _connection.StateChanged -= Disconnected;
+            ChangingMode = false; Changed?.Invoke(); _modeChange.Release();
+        }
     }
 
     private static Channel<(DecodedFrame Frame, long Generation)> LatestFrames(Action dropped) =>

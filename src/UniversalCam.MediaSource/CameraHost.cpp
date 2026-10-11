@@ -15,7 +15,7 @@ struct CameraHost {
         stopped.notify_all();
         if (thread.joinable()) thread.join();
     }
-    void Run(std::wstring path, std::promise<HRESULT> ready) {
+    void Run(std::wstring path, NativeFormat format, std::promise<HRESULT> ready) {
         HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         const bool comInitialized = SUCCEEDED(hr);
         bool mfInitialized = false;
@@ -38,6 +38,8 @@ struct CameraHost {
             MFVirtualCameraLifetime_Session, MFVirtualCameraAccess_CurrentUser,
             L"CamoRip", UniversalCamClsid, nullptr, 0, &camera);
         if (SUCCEEDED(hr)) hr = camera->SetString(UCAM_FRAME_PATH, path.c_str());
+        if (SUCCEEDED(hr)) hr = MFSetAttributeSize(camera.Get(), UCAM_FRAME_SIZE, format.width, format.height);
+        if (SUCCEEDED(hr)) hr = camera->SetUINT32(UCAM_FRAME_RATE, format.fps);
         if (SUCCEEDED(hr)) hr = camera->Start(nullptr);
         ready.set_value(hr);
         if (SUCCEEDED(hr)) {
@@ -56,19 +58,25 @@ struct CameraHost {
 };
 }
 
-extern "C" HRESULT __stdcall UCamStartCamera(LPCWSTR path, void** result) {
+extern "C" HRESULT __stdcall UCamStartCameraMode(LPCWSTR path, DWORD width, DWORD height, DWORD fps, void** result) {
     if (!result || !path) return E_POINTER;
     *result = nullptr;
+    const NativeFormat format{width, height, fps};
+    if (!format.Valid()) return E_INVALIDARG;
     try {
         auto host = std::make_unique<CameraHost>();
         std::promise<HRESULT> ready;
         auto started = ready.get_future();
-        host->thread = std::thread(&CameraHost::Run, host.get(), std::wstring(path), std::move(ready));
+        host->thread = std::thread(&CameraHost::Run, host.get(), std::wstring(path), format, std::move(ready));
         CHECK_HR(started.get());
         *result = host.release();
         return S_OK;
     } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
       catch (...) { return E_FAIL; }
+}
+
+extern "C" HRESULT __stdcall UCamStartCamera(LPCWSTR path, void** result) {
+    return UCamStartCameraMode(path, FrameWidth, FrameHeight, 60, result);
 }
 
 extern "C" void __stdcall UCamStopCamera(void* context) { delete static_cast<CameraHost*>(context); }

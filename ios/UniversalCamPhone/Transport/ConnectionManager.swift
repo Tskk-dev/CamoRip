@@ -214,18 +214,18 @@ final class ConnectionManager: ObservableObject {
         }
         switch message {
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
-        case .configure(let resolution, let fps, let codec, let requestedBitrate):
+        case .configure(let resolution, let fps, let codec, let requestedBitrate, let requestID):
             let dimensions = resolution.split(separator: "x")
             guard codec.lowercased() == "h264", dimensions.count == 2,
                   let width = Int32(dimensions[0]), let height = Int32(dimensions[1]),
-                  (640...1920).contains(width), (360...1080).contains(height),
+                  (640...3840).contains(width), (360...2160).contains(height), width % 2 == 0, height % 2 == 0,
                   (15...60).contains(fps), (500_000...20_000_000).contains(requestedBitrate),
                   let camera = cameraSession else {
-                fail(code: "unsupported_configuration", message: "Use H.264, up to 1920x1080 at 15–60 fps."); return
+                fail(code: "unsupported_configuration", message: "Use H.264, up to 3840x2160 at 15–60 fps."); return
             }
             stopStreaming(notifyPeer: false)
             configuring = true
@@ -243,7 +243,7 @@ final class ConnectionManager: ObservableObject {
                     self.prepareEncoder(config)
                     self.negotiated = true
                     self.state = .connected
-                    self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
+                    self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps), requestID: requestID))
                     self.sendCameras()
                     self.sendCameraState()
                     if self.startRequested {
@@ -342,8 +342,8 @@ enum ControlMessage: Codable {
     case getCameraState
     case cameraSettings(CameraControlRequest)
     case cameraState(CameraControlState)
-    case configure(resolution: String, fps: Int, codec: String, bitrate: Int)
-    case configureAck(resolution: String, fps: Int)
+    case configure(resolution: String, fps: Int, codec: String, bitrate: Int, requestID: Int64 = 0)
+    case configureAck(resolution: String, fps: Int, requestID: Int64 = 0)
     case startStream
     case stopStream
     case switchCamera(cameraID: String?)
@@ -403,12 +403,14 @@ enum ControlMessage: Codable {
             try container.encode(capabilities, forKey: .capabilities)
         case .welcome:
             break
-        case .configure(let resolution, let fps, let codec, let bitrate):
+        case .configure(let resolution, let fps, let codec, let bitrate, let requestID):
+            try container.encode(requestID, forKey: .request_id)
             try container.encode(resolution, forKey: .resolution)
             try container.encode(fps, forKey: .fps)
             try container.encode(codec, forKey: .codec)
             try container.encode(bitrate, forKey: .bitrate)
-        case .configureAck(let resolution, let fps):
+        case .configureAck(let resolution, let fps, let requestID):
+            try container.encode(requestID, forKey: .request_id)
             try container.encode(resolution, forKey: .resolution)
             try container.encode(fps, forKey: .fps)
         case .startStream, .stopStream, .listCameras:
@@ -450,11 +452,11 @@ enum ControlMessage: Codable {
             let fps = try container.decode(Int.self, forKey: .fps)
             let codec = try container.decode(String.self, forKey: .codec)
             let bitrate = try container.decode(Int.self, forKey: .bitrate)
-            self = .configure(resolution: resolution, fps: fps, codec: codec, bitrate: bitrate)
+            self = .configure(resolution: resolution, fps: fps, codec: codec, bitrate: bitrate, requestID: try container.decodeIfPresent(Int64.self, forKey: .request_id) ?? 0)
         case "configure_ack":
             let resolution = try container.decode(String.self, forKey: .resolution)
             let fps = try container.decode(Int.self, forKey: .fps)
-            self = .configureAck(resolution: resolution, fps: fps)
+            self = .configureAck(resolution: resolution, fps: fps, requestID: try container.decodeIfPresent(Int64.self, forKey: .request_id) ?? 0)
         case "start_stream":
             self = .startStream
         case "stop_stream":

@@ -26,8 +26,11 @@
        <TextBlock x:Name="DeviceStatus" Text="Connect your iPhone over USB" TextWrapping="Wrap" />
        <Button x:Name="StreamButton" Content="Start video" Click="OnToggleStream" IsEnabled="False" HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}" />
        <Button x:Name="SwitchCamera" Content="Switch camera" Click="OnSwitchCamera" IsEnabled="False" HorizontalAlignment="Stretch" />
+       <ComboBox x:Name="CaptureMode" Header="Resolution and frame rate" SelectionChanged="OnCaptureMode" HorizontalAlignment="Stretch" IsEnabled="False" />
+       <TextBlock x:Name="CaptureModeHint" Text="Connect the updated iPhone app to choose a video mode." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
        <ToggleSwitch x:Name="Torch" Header="Torch" Toggled="OnTorch" IsEnabled="False" />
        <Slider x:Name="TorchLevel" Header="Torch brightness" Minimum="0.01" Maximum="1" StepFrequency="0.01" Value="0.5" ValueChanged="OnTorchLevel" IsEnabled="False" AutomationProperties.Name="Torch brightness" />
+       <TextBlock x:Name="TorchValue" Text="50%" />
        <TextBlock x:Name="VideoStatus" Text="1080p · 60 fps" TextWrapping="Wrap" />
       </StackPanel>
       <StackPanel x:Name="AdjustmentsPage" Spacing="12" Visibility="Collapsed">

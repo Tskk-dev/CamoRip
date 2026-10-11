@@ -4,11 +4,12 @@ using UniversalCam.Core.Video;
 
 namespace UniversalCam.VirtualCamera;
 
-/// <summary>Publishes a fixed 1080p60 Windows 11 camera. Missing/stopped phone video shows a placeholder.</summary>
+/// <summary>Publishes the negotiated Windows 11 camera. Missing/stopped phone video shows a placeholder.</summary>
 public sealed class VirtualCameraSession : IDisposable
 {
     private readonly object _sync = new();
-    private readonly SharedMemoryBridge _bridge = new();
+    private SharedMemoryBridge _bridge = new();
+    public VideoMode Mode { get; private set; } = VideoMode.Default;
     private readonly PlaceholderFrameGenerator _placeholder = new();
     private MfVirtualCameraServer? _server;
     private bool _enabled = true;
@@ -37,6 +38,20 @@ public sealed class VirtualCameraSession : IDisposable
 
     public VirtualCameraSession() { Initialize(); }
 
+    public void SetMode(VideoMode mode)
+    {
+        if (!mode.IsValid) throw new ArgumentException("Invalid camera format.", nameof(mode));
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (Mode == mode) return;
+            _server?.Dispose(); _server = null;
+            _bridge.Dispose();
+            Mode = mode; _bridge = new SharedMemoryBridge(mode); _resizedFrame = null;
+            Initialize();
+        }
+    }
+
     private void Initialize()
     {
         if (_disposed || !_enabled || _server != null) return;
@@ -49,8 +64,8 @@ public sealed class VirtualCameraSession : IDisposable
         {
             _bridge.Open();
             WritePlaceholder();
-            _server = new MfVirtualCameraServer(_bridge.Path);
-            SetStatus("CamoRip is available in camera apps (1080p60).");
+            _server = new MfVirtualCameraServer(_bridge.Path, Mode);
+            SetStatus($"CamoRip is available in camera apps ({Mode}).");
         }
         catch (DllNotFoundException)
         {
@@ -82,15 +97,15 @@ public sealed class VirtualCameraSession : IDisposable
             if (_disposed || !_enabled || _server == null || !_streaming) return false;
             try
             {
-                var needsResize = frame.Width != SharedMemoryBridge.Width || frame.Height != SharedMemoryBridge.Height;
-                if (needsResize) _resizedFrame ??= new byte[SharedMemoryBridge.Width * SharedMemoryBridge.Height * 3 / 2];
+                var needsResize = frame.Width != Mode.Width || frame.Height != Mode.Height;
+                if (needsResize) _resizedFrame ??= new byte[Mode.Width * Mode.Height * 3 / 2];
                 _bridge.WriteFrame(new NV12Frame
                 {
-                    Width = SharedMemoryBridge.Width,
-                    Height = SharedMemoryBridge.Height,
+                    Width = Mode.Width,
+                    Height = Mode.Height,
                     PtsUs = frame.PtsUs,
                     Data = NV12Converter.FitNv12(frame.Data, frame.Width, frame.Height,
-                        SharedMemoryBridge.Width, SharedMemoryBridge.Height, needsResize ? _resizedFrame : null)
+                        Mode.Width, Mode.Height, needsResize ? _resizedFrame : null)
                 });
                 return true;
             }
@@ -117,7 +132,7 @@ public sealed class VirtualCameraSession : IDisposable
 
     public void OnStreamStateChanged(object? sender, bool streaming) => SetStreaming(streaming);
 
-    private void WritePlaceholder() => _bridge.WriteFrame(_placeholder.GenerateFrame());
+    private void WritePlaceholder() => _bridge.WriteFrame(_placeholder.GenerateFrame(Mode.Width, Mode.Height));
     private void SetStatus(string message)
     {
         if (StatusMessage == message) return;

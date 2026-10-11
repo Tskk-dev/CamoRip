@@ -21,6 +21,8 @@ internal sealed class AppSettings
     public int PreviewFps { get; set; } = 60;
     public bool PreviewMirror { get; set; }
     public bool PreviewFill { get; set; }
+    public string CaptureResolution { get; set; } = "1920x1080";
+    public int CaptureFps { get; set; } = 60;
     public static AppSettings Load(string? directory = null)
     {
         directory ??= DirectoryPath;
@@ -29,6 +31,8 @@ internal sealed class AppSettings
             var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(Path.Combine(directory, "settings.json"))) ?? new();
             settings._storageDirectory = directory;
             if (settings.PreviewFps is not (0 or 15 or 30 or 60)) settings.PreviewFps = 60;
+            if (!Core.Video.VideoMode.Choices.Contains(Core.Video.VideoMode.Parse(settings.CaptureResolution ?? "", settings.CaptureFps)))
+            { settings.CaptureResolution = "1920x1080"; settings.CaptureFps = 60; }
             return settings;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return new() { _storageDirectory = directory }; }

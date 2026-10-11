@@ -1,6 +1,18 @@
 import XCTest
 
 final class CameraControlProtocolTests: XCTestCase {
+    func testCaptureModesInclude4K30AndFilterActualFrameRateRanges() throws {
+        XCTAssertEqual(CaptureMode.choices.count, 5)
+        let mode = CaptureMode(width: 3840, height: 2160, fps: 30)
+        XCTAssertTrue(CaptureMode.choices.contains(mode))
+        XCTAssertFalse(CaptureMode.choices.contains(.init(width: 3840, height: 2160, fps: 60)))
+        XCTAssertTrue(mode.matches(width: 3840, height: 2160, minFPS: 1, maxFPS: 30))
+        XCTAssertFalse(mode.matches(width: 1920, height: 1080, minFPS: 1, maxFPS: 60))
+        XCTAssertFalse(mode.matches(width: 3840, height: 2160, minFPS: 1, maxFPS: 24))
+        var state = CameraControlState(); state.capture_modes = [mode]
+        let decoded = try JSONDecoder().decode(CameraControlState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(decoded.capture_modes, [mode])
+    }
     func testWindowsRequestDecodesWithCameraIdentityAndLatestValues() throws {
         let data = Data(#"{"type":"camera_settings","request_id":42,"camera_id":"rear","values":{"auto_focus":0,"focus":0.25,"exposure_bias":-0.7}}"#.utf8)
         let request = try JSONDecoder().decode(CameraControlRequest.self, from: data)

@@ -17,7 +17,7 @@ static HMODULE g_module = nullptr;
 
 namespace {
 
-HRESULT CreateVideoType(IMFMediaType** result) {
+HRESULT CreateVideoType(IMFMediaType** result, NativeFormat format) {
     ComPtr<IMFMediaType> type;
     CHECK_HR(MFCreateMediaType(&type));
     CHECK_HR(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
@@ -25,14 +25,14 @@ HRESULT CreateVideoType(IMFMediaType** result) {
     CHECK_HR(type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
     CHECK_HR(type->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
     CHECK_HR(type->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE));
-    CHECK_HR(type->SetUINT32(MF_MT_SAMPLE_SIZE, FrameBytes));
-    CHECK_HR(type->SetUINT32(MF_MT_DEFAULT_STRIDE, FrameWidth));
+    CHECK_HR(type->SetUINT32(MF_MT_SAMPLE_SIZE, format.Bytes()));
+    CHECK_HR(type->SetUINT32(MF_MT_DEFAULT_STRIDE, format.width));
     CHECK_HR(type->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235));
     CHECK_HR(type->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709));
     CHECK_HR(type->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709));
     CHECK_HR(type->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709));
-    CHECK_HR(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, FrameWidth, FrameHeight));
-    CHECK_HR(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, 60, 1));
+    CHECK_HR(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, format.width, format.height));
+    CHECK_HR(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, format.fps, 1));
     CHECK_HR(MFSetAttributeRatio(type.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1));
     return type.CopyTo(result);
 }
@@ -62,6 +62,7 @@ HRESULT SetStreamAttributes(IMFAttributes* attributes) {
 class MediaStream final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
     ChainInterfaces<IMFMediaStream2, IMFMediaStream, IMFMediaEventGenerator>, FtmBase> {
     ObjectLifetime lifetime_;
+    NativeFormat format_;
     std::mutex mutex_;
     std::condition_variable wake_;
     std::thread worker_;
@@ -81,16 +82,12 @@ class MediaStream final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
     unsigned generation_ = 0;
 
     void Placeholder() {
-        // Neutral NV12 with a centered camera-shaped block, also works before any publisher exists.
-        std::fill(pixels_.begin(), pixels_.begin() + FrameWidth * FrameHeight, 32);
-        std::fill(pixels_.begin() + FrameWidth * FrameHeight, pixels_.end(), 128);
-        for (DWORD y = 400; y < 680; ++y) {
-            std::fill(pixels_.begin() + y * FrameWidth + 760, pixels_.begin() + y * FrameWidth + 1160, 52);
-            for (DWORD x = 880; x < 1040; ++x) {
-                const auto dx = static_cast<int>(x) - 960, dy = static_cast<int>(y) - 540;
-                if (dx * dx + dy * dy < 75 * 75) pixels_[y * FrameWidth + x] = 90;
-            }
-        }
+        const auto yBytes = format_.width * format_.height;
+        std::fill(pixels_.begin(), pixels_.begin() + yBytes, 32);
+        std::fill(pixels_.begin() + yBytes, pixels_.end(), 128);
+        for (DWORD y = format_.height * 3 / 8; y < format_.height * 5 / 8; ++y)
+            std::fill(pixels_.begin() + y * format_.width + format_.width * 2 / 5,
+                pixels_.begin() + y * format_.width + format_.width * 3 / 5, 52);
     }
 
     HRESULT FillSample(IMFSample* sample, bool& live) {
@@ -104,23 +101,23 @@ class MediaStream final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
             CHECK_HR(buffer2d->Lock2DSize(MF2DBuffer_LockFlags_Write, &scanline, &pitch, &start, &length));
             HRESULT hr = S_OK;
             // NV12 uses equal positive strides for its Y and interleaved UV planes.
-            if (!scanline || pitch < static_cast<LONG>(FrameWidth) ||
-                length < static_cast<ULONGLONG>(pitch) * FrameHeight * 3 / 2) hr = MF_E_BUFFERTOOSMALL;
+            if (!scanline || pitch < static_cast<LONG>(format_.width) ||
+                length < static_cast<ULONGLONG>(pitch) * format_.height * 3 / 2) hr = MF_E_BUFFERTOOSMALL;
             else {
-                for (DWORD y = 0; y < FrameHeight * 3 / 2; ++y)
-                    std::memcpy(scanline + static_cast<size_t>(y) * pitch, pixels_.data() + y * FrameWidth, FrameWidth);
+                for (DWORD y = 0; y < format_.height * 3 / 2; ++y)
+                    std::memcpy(scanline + static_cast<size_t>(y) * pitch, pixels_.data() + y * format_.width, format_.width);
             }
             const auto unlock = buffer2d->Unlock2D();
             CHECK_HR(hr); CHECK_HR(unlock);
         } else {
             BYTE* destination = nullptr; DWORD maximum = 0;
             CHECK_HR(buffer->Lock(&destination, &maximum, nullptr));
-            const auto hr = maximum >= FrameBytes ? S_OK : MF_E_BUFFERTOOSMALL;
-            if (SUCCEEDED(hr)) std::memcpy(destination, pixels_.data(), FrameBytes);
+            const auto hr = maximum >= format_.Bytes() ? S_OK : MF_E_BUFFERTOOSMALL;
+            if (SUCCEEDED(hr)) std::memcpy(destination, pixels_.data(), format_.Bytes());
             const auto unlock = buffer->Unlock();
             CHECK_HR(hr); CHECK_HR(unlock);
         }
-        CHECK_HR(buffer->SetCurrentLength(FrameBytes));
+        CHECK_HR(buffer->SetCurrentLength(format_.Bytes()));
         return S_OK;
     }
 
@@ -140,14 +137,14 @@ class MediaStream final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
             const auto now = std::chrono::steady_clock::now();
             if (next < now - std::chrono::milliseconds(100)) next = now;
             if (wake_.wait_until(lock, next, [this, epoch] { return shutdown_ || epoch != generation_ || state_ != MF_STREAM_STATE_RUNNING; })) continue;
-            next += std::chrono::nanoseconds(1'000'000'000 / 60);
+            next += std::chrono::nanoseconds(1'000'000'000 / format_.fps);
             auto token = requests_.front(); requests_.pop_front();
             ComPtr<IMFSample> sample;
             HRESULT hr = allocator_->AllocateSample(&sample);
             bool live = false;
             if (SUCCEEDED(hr)) hr = FillSample(sample.Get(), live);
             if (SUCCEEDED(hr)) hr = sample->SetSampleTime(MFGetSystemTime());
-            if (SUCCEEDED(hr)) hr = sample->SetSampleDuration(FrameDuration);
+            if (SUCCEEDED(hr)) hr = sample->SetSampleDuration(format_.Duration());
             if (SUCCEEDED(hr) && token) hr = sample->SetUnknown(MFSampleExtension_Token, token.Get());
             if (SUCCEEDED(hr) && !token) sample->DeleteItem(MFSampleExtension_Token);
             if (SUCCEEDED(hr)) hr = sample->SetUINT32(MFSampleExtension_Discontinuity, firstSample_ || live != lastLive_);
@@ -162,13 +159,15 @@ class MediaStream final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
     }
 
 public:
-    HRESULT Initialize(IMFMediaSource* parent, const std::wstring& path) {
+    HRESULT Initialize(IMFMediaSource* parent, const std::wstring& path, NativeFormat format) {
+        if (!format.Valid()) return E_INVALIDARG;
+        format_ = format; reader_.SetFormat(format);
         parent_ = parent; reader_.SetPath(path);
-        pixels_.resize(FrameBytes);
+        pixels_.resize(format_.Bytes());
         CHECK_HR(MFCreateEventQueue(&events_));
         CHECK_HR(MFCreateAttributes(&attributes_, 4));
         CHECK_HR(SetStreamAttributes(attributes_.Get()));
-        CHECK_HR(CreateVideoType(&type_));
+        CHECK_HR(CreateVideoType(&type_, format_));
         IMFMediaType* types[]{type_.Get()};
         CHECK_HR(MFCreateStreamDescriptor(0, 1, types, &descriptor_));
         CHECK_HR(SetStreamAttributes(descriptor_.Get()));
@@ -214,8 +213,8 @@ public:
             CHECK_HR(type->GetGUID(MF_MT_SUBTYPE, &subtype));
             CHECK_HR(MFGetAttributeSize(type, MF_MT_FRAME_SIZE, &width, &height));
             CHECK_HR(MFGetAttributeRatio(type, MF_MT_FRAME_RATE, &rate, &denominator));
-            if (subtype != MFVideoFormat_NV12 || width != FrameWidth || height != FrameHeight ||
-                denominator == 0 || static_cast<UINT64>(rate) != 60ull * denominator) return MF_E_INVALIDMEDIATYPE;
+            if (subtype != MFVideoFormat_NV12 || width != format_.width || height != format_.height ||
+                denominator == 0 || static_cast<UINT64>(rate) != static_cast<UINT64>(format_.fps) * denominator) return MF_E_INVALIDMEDIATYPE;
             ComPtr<IMFMediaTypeHandler> handler;
             CHECK_HR(descriptor_->GetMediaTypeHandler(&handler));
             CHECK_HR(handler->IsMediaTypeSupported(type, nullptr));
@@ -288,7 +287,13 @@ public:
         CoTaskMemFree(path);
         stream_ = Make<MediaStream>();
         if (!stream_) return E_OUTOFMEMORY;
-        CHECK_HR(stream_->Initialize(this, framePath));
+        NativeFormat format;
+        if (activation) {
+            UINT64 size = 0; UINT32 fps = 0;
+            if (SUCCEEDED(activation->GetUINT64(UCAM_FRAME_SIZE, &size))) { format.width = static_cast<DWORD>(size >> 32); format.height = static_cast<DWORD>(size); }
+            if (SUCCEEDED(activation->GetUINT32(UCAM_FRAME_RATE, &fps))) format.fps = fps;
+        }
+        CHECK_HR(stream_->Initialize(this, framePath, format));
         ComPtr<IMFStreamDescriptor> streamDescriptor;
         CHECK_HR(stream_->GetStreamDescriptor(&streamDescriptor));
         IMFStreamDescriptor* streams[]{streamDescriptor.Get()};

@@ -5,9 +5,11 @@ EXPORTS
     DllRegisterServer PRIVATE
     DllUnregisterServer PRIVATE
     UCamOpenWriter
+    UCamOpenWriterMode
     UCamWriteFrame
     UCamCloseWriter
     UCamStartCamera
+    UCamStartCameraMode
     UCamStopCamera
     UCamRemoveCamera
 

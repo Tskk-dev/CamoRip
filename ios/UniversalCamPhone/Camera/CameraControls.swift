@@ -18,6 +18,14 @@ extension CameraSession {
     private func controlSnapshot() -> CameraControlState {
         var state = CameraControlState()
         guard let d = currentDevice else { return state }
+        state.capture_modes = CaptureMode.choices.filter { mode in
+            d.formats.contains { format in
+                let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                return format.videoSupportedFrameRateRanges.contains {
+                    mode.matches(width: size.width, height: size.height, minFPS: $0.minFrameRate, maxFPS: $0.maxFrameRate)
+                }
+            }
+        }
         state.camera_id = d.uniqueID
         state.torch_available = d.hasTorch && d.isTorchAvailable && d.isTorchModeSupported(.on)
         state.torch_on = d.isTorchActive

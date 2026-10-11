@@ -68,6 +68,7 @@ public sealed record Welcome : ControlMessage
 public sealed record Configure : ControlMessage
 {
     public override string Type => "configure";
+    public long RequestId { get; init; }
 
     [JsonPropertyName("resolution")]  public string Resolution { get; init; } = "1920x1080";
     [JsonPropertyName("fps")]         public int    Fps        { get; init; } = 60;
@@ -111,6 +112,7 @@ public sealed record Hello : ControlMessage
 public sealed record ConfigureAck : ControlMessage
 {
     public override string Type => "configure_ack";
+    public long RequestId { get; init; }
 
     [JsonPropertyName("resolution")] public string Resolution { get; init; } = string.Empty;
     [JsonPropertyName("fps")]        public int    Fps        { get; init; }
@@ -191,11 +193,13 @@ public sealed record CameraSettings : ControlMessage
 }
 public sealed record ControlRange
 {
+    [JsonIgnore] public bool IsValid => double.IsFinite(Min) && double.IsFinite(Max) && Max >= Min;
     public double Min { get; init; }
     public double Max { get; init; }
 }
 public sealed record CameraState : ControlMessage
 {
+    public List<Video.VideoMode> CaptureModes { get; init; } = new();
     public bool IsStaleComparedTo(long latestRequest) => RequestId > 0 && RequestId < latestRequest;
     public override string Type => "camera_state";
     public long RequestId { get; init; }

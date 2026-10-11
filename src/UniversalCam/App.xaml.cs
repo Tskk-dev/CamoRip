@@ -47,6 +47,7 @@ public partial class App : Application
         if (Settings.StartMinimized || Environment.GetCommandLineArgs().Contains("--minimized")) _window.HideToTray();
         if (AppSettings.StartupCheck)
         {
+            _window.CheckControls();
             Log("INFO", "Startup check passed: WinUI resources loaded.");
             _startupCheckTimer = _dispatcher.CreateTimer();
             _startupCheckTimer.Interval = TimeSpan.FromSeconds(1);
@@ -71,7 +72,7 @@ public partial class App : Application
         _window?.Close();
         Exit();
     }
-    internal static void Ui(Action action) => _dispatcher?.TryEnqueue(() => action());
+    internal static void Ui(Action action) => _dispatcher?.TryEnqueue(() => { try { action(); } catch (Exception ex) { Log(ex); } });
     internal static async void Run(Func<Task> work)
     { try { await work(); } catch (Exception ex) { Log(ex); } }
     internal static void SetLogging(bool enabled, bool rotate = false) => LogFile.SetEnabled(enabled, rotate);

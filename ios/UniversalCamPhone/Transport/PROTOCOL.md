@@ -103,3 +103,14 @@ or additional transport endpoint is introduced.
 Torch defaults off and requires active streaming. Stop/disconnect/camera-switch
 and application background/shutdown paths turn it off. The phone reports thermal
 availability; do not assume a previously reported torch capability stays available.
+
+## Capture modes (0.3.0)
+
+`hello.capabilities` adds `capture_modes_v1`. `camera_state.capture_modes` lists
+objects `{ "width": 3840, "height": 2160, "fps": 30 }` supported by the current
+AVFoundation device, filtered to 720p30/60, 1080p30/60 and 4K30. Configure and
+configure_ack carry an integer `request_id`; the phone echoes the request ID.
+An unsolicited camera-switch acknowledgement uses ID 0. Older peers omit the ID.
+Windows ignores superseded nonzero acknowledgements. Reconfiguration stops the
+pipeline and resumes only if the user still wants streaming. The acknowledged
+mode determines the native Windows media type and channel dimensions.

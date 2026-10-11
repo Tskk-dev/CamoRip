@@ -4,7 +4,7 @@
 implements an activatable `IMFMediaSourceEx`, one `IMFMediaStream2`, event queues,
 capture stream and legacy sensor profile attributes, pipeline sample allocator
 support, sample request tokens, timestamps and stream start/stop/shutdown.
-The only output type is NV12, 1920×1080 at 60 frames/second. The companion scales
+The output type is NV12 at the negotiated capture dimensions and rate (720p30/60, 1080p30/60 or 4K30). Each source advertises its selected mode; changing mode creates a fresh channel and restarts registration. The companion scales
 and letterboxes camera frames into this type so switching front/rear cameras
 does not change the webcam's advertised media type.
 

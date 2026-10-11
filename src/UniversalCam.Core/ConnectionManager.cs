@@ -33,11 +33,11 @@ public sealed class ConnectionManager : IAsyncDisposable
     private volatile bool _desiredStreaming = true;
     private volatile bool _configurationPending;
     private volatile bool _startAfterConfigure;
-    private volatile bool _configured;
     private bool _sessionReady;
     private int _generation;
     private int _configurationGeneration;
     private int _transportGeneration;
+    private long _configurationRequestId;
 
     public ConnectionManager() : this(new TcpUsbTransport()) { }
 
@@ -67,12 +67,14 @@ public sealed class ConnectionManager : IAsyncDisposable
     {
         if (codec != "h264") throw new ArgumentException("Only H.264 is supported.", nameof(codec));
         if (fps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(fps), "Choose 1–60 fps.");
+        if (Video.VideoMode.Parse(resolution, fps) is null) throw new ArgumentException("Choose a valid NV12 capture mode up to 4K.", nameof(resolution));
         if (bitrate is < 100_000 or > 20_000_000) throw new ArgumentOutOfRangeException(nameof(bitrate));
         if (ActiveTransport != TransportType.USB) return Task.CompletedTask;
         _configurationGeneration = Volatile.Read(ref _generation);
         _configurationPending = true;
-        _startAfterConfigure = !_configured && _desiredStreaming;
-        return SendAsync(new Configure { Resolution = resolution, Fps = fps, Codec = codec, Bitrate = bitrate }, ct);
+        _startAfterConfigure = _desiredStreaming;
+        SetStreaming(false);
+        return SendAsync(new Configure { RequestId = Interlocked.Increment(ref _configurationRequestId), Resolution = resolution, Fps = fps, Codec = codec, Bitrate = bitrate }, ct);
     }
 
     public Task StartStreamAsync(CancellationToken ct = default)
@@ -104,7 +106,6 @@ public sealed class ConnectionManager : IAsyncDisposable
             var generation = Interlocked.Increment(ref _generation);
             _transportGeneration = _usb.ConnectionGeneration;
             _sessionReady = false;
-            _configured = false;
             _configurationPending = false;
             ActiveTransport = TransportType.None;
             // Transport connection is not ready for use until Hello identifies the app.
@@ -167,12 +168,14 @@ public sealed class ConnectionManager : IAsyncDisposable
                 CameraStateReceived?.Invoke(this, cameraState);
                 break;
             case ConfigureAck ack:
+                if (ack.RequestId > 0 && (!_configurationPending || ack.RequestId != Interlocked.Read(ref _configurationRequestId))) break;
+                if (Video.VideoMode.Parse(ack.Resolution, ack.Fps) is null)
+                { Failure?.Invoke(this, "The phone acknowledged an invalid capture mode."); break; }
                 var generation = Volatile.Read(ref _generation);
                 var start = _configurationPending && _configurationGeneration == generation &&
                     _startAfterConfigure && _desiredStreaming;
                 _configurationPending = false;
                 _startAfterConfigure = false;
-                _configured = true;
                 CaptureResolution = ack.Resolution;
                 CaptureFrameRate = ack.Fps;
                 ConfigurationAcknowledged?.Invoke(this, ack);
