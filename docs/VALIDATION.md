@@ -30,3 +30,18 @@ Use the Actions result to establish which of these passed for a particular commi
 - [ ] Observe network behavior on both devices. Confirm camera traffic uses the cable and loopback endpoints; no app audio stream, Wi-Fi camera endpoint, or external video server is active.
 
 If a physical check fails, keep the release status incomplete and report the specific evidence. Do not infer successful 1080p60 or client compatibility from compilation.
+
+## Reported performance failure: 2026-10-11
+
+The user's Windows log from 21:02:02 through 21:04:08 (Windows build 26300,
+capture configured at 1920x1080/60) shows USB receipt near 60 fps with decoded
+and published rates usually around 6 fps, sometimes zero. Compressed-queue
+overflows recur throughout the run. This establishes loss in the Windows
+pipeline; the original metrics cannot separate decoding from its synchronous
+camera/preview callback. Sustained 1080p60 acceptance remains failed/pending.
+
+The follow-up Windows change separates those consumers, bounds compressed
+backlog by size and age, waits for one keyframe after an overflow, and adds
+per-stage timing and freshness diagnostics. Reproduce on the phone/PC and
+compare `latest.log` after installing the new Windows artifact. No successful
+physical retest has been recorded for this change.

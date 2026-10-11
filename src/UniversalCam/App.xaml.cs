@@ -24,11 +24,17 @@ public partial class App : Application
         try
         {
             Directory.CreateDirectory(LogDirectory);
+            // Preserve the last run when restarting after a crash or stall.
+            if (File.Exists(LogFilePath)) File.Copy(LogFilePath, Path.Combine(LogDirectory, "previous.log"), true);
             _log = new StreamWriter(LogFilePath, false) { AutoFlush = true };
             Log("INFO", $"Application started. OS={Environment.OSVersion}; Process={(Environment.Is64BitProcess ? "x64" : "x86")}");
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            Log("FATAL", $"Unhandled exception (terminating={args.IsTerminating}): {args.ExceptionObject}");
+        DispatcherUnhandledException += (_, args) => Log("FATAL", $"UI exception: {args.Exception}");
+        TaskScheduler.UnobservedTaskException += (_, args) => Log("ERROR", $"Unobserved task exception: {args.Exception}");
         base.OnStartup(e);
     }
 
@@ -48,7 +54,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _log?.Dispose();
+        Log("INFO", $"Application exited with code {e.ApplicationExitCode}.");
+        lock (typeof(App)) { _log?.Dispose(); _log = null; }
         if (_ownsInstance) _instance?.ReleaseMutex();
         _instance?.Dispose();
         base.OnExit(e);
