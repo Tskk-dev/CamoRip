@@ -71,3 +71,35 @@ connection stays available for a retry unless framing is invalid.
 To bound delay the phone permits three video sends in flight. If a compressed
 reference frame is dropped it discards delta frames until a fresh keyframe with
 SPS/PPS, and requests that keyframe from VideoToolbox.
+
+## Camera controls extension (`camera_controls_v1`)
+
+Phones that implement this extension include `camera_controls_v1` in Hello.
+The phone sends a `camera_state` after handshake/configuration/switch and on
+heartbeats. Windows can also request it with `{"type":"get_camera_state"}`.
+
+A request uses snake_case fields for this extension:
+
+```json
+{"type":"camera_settings","request_id":42,"camera_id":"rear-device-id","values":{"auto_exposure":0,"iso":100,"shutter_ms":8,"auto_focus":0,"focus":0.25}}
+```
+
+`values` accepts `exposure_bias`, `auto_exposure`, `iso`, `shutter_ms`,
+`auto_focus`, `focus`, `auto_white_balance`, `temperature`, `tint`, `torch_on`,
+`torch_level`, and `reset`. Modes are 0/1. Units are EV, ISO, milliseconds,
+normalized lens position, Kelvin, tint, and normalized torch level. Unsupported
+keys, non-finite numbers, stale camera IDs and out-of-range values are rejected.
+
+`camera_state` includes `request_id` (0 for unsolicited snapshots), `camera_id`,
+`torch_available`, `torch_on`, `auto_exposure_supported`, `auto_focus_supported`,
+`auto_white_balance_supported`, `ranges` (`key: {min,max}`) and actual `values`.
+Only supported numeric controls have ranges. Manual shutter max is bounded by
+the active frame duration. Optional `error` explains a rejected request without
+stopping video. An acknowledgement follows asynchronous device setters; Windows
+ignores stale confirmations and times out a missing acknowledgement after 5 s.
+Camera settings run on the phone before VideoToolbox encoding. No PC color filter
+or additional transport endpoint is introduced.
+
+Torch defaults off and requires active streaming. Stop/disconnect/camera-switch
+and application background/shutdown paths turn it off. The phone reports thermal
+availability; do not assume a previously reported torch capability stays available.

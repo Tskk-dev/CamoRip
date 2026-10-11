@@ -7,6 +7,8 @@ try {
     if ($LASTEXITCODE) { throw 'Native video decoder configuration failed.' }
     cmake --build artifacts/decoder --config $Configuration
     if ($LASTEXITCODE) { throw 'Native video decoder build failed.' }
+    ctest --test-dir artifacts/decoder -C $Configuration --output-on-failure
+    if ($LASTEXITCODE) { throw 'Native preview shader checks failed.' }
     cmake -S src/UniversalCam.MediaSource -B artifacts/native -A x64
     if ($LASTEXITCODE) { throw 'Native camera configuration failed.' }
     cmake --build artifacts/native --config $Configuration

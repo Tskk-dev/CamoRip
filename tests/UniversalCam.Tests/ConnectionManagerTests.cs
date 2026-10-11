@@ -84,6 +84,46 @@ public class ConnectionManagerTests
         Assert.False(manager.IsStreaming);
     }
 
+    [Fact]
+    public async Task CameraControlAcknowledgementDoesNotStopVideo()
+    {
+        using var service = new FakeAppleService();
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var confirmed = new TaskCompletionSource<CameraState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = Task.Run(async () =>
+        {
+            await DiscoveryAsync(service);
+            await service.ServeOnceAsync(async (_, stream) =>
+            {
+                await FakeAppleService.ReplyAsync(stream, "<key>MessageType</key><string>Result</string><key>Number</key><integer>0</integer>");
+                Assert.IsType<Welcome>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new Hello { DeviceName = "test phone", Capabilities = ["h264", "camera_controls_v1"] });
+                var request = Assert.IsType<CameraSettings>(await ReadControlAsync(stream));
+                Assert.Equal(9, request.RequestId);
+                await SendControlAsync(stream, new StartStream());
+                await SendControlAsync(stream, new CameraState { RequestId = request.RequestId, CameraId = "front", Error = "Torch unavailable" });
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            });
+        });
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(service.Port), TimeSpan.FromSeconds(1)));
+        manager.StateChanged += (_, state) =>
+        {
+            if (state == TransportState.Connected)
+                _ = manager.SetCameraSettingsAsync(new CameraSettings { RequestId = 9, CameraId = "front", Values = new() { ["torch_on"] = 1 } });
+        };
+        manager.CameraStateReceived += (_, state) => confirmed.TrySetResult(state);
+        await manager.StartAsync();
+        try
+        {
+            var state = await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(manager.SupportsCameraSettings);
+            Assert.True(manager.IsStreaming);
+            Assert.Equal("Torch unavailable", state.Error);
+        }
+        finally { release.TrySetResult(true); }
+        await server;
+    }
+
     private static async Task DiscoveryAsync(FakeAppleService service)
     {
         await service.ServeOnceAsync((_, stream) => FakeAppleService.ReplyAsync(stream, """

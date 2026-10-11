@@ -20,8 +20,8 @@ struct Preview {
     ComPtr<ID3D11SamplerState> sampler;
     ComPtr<ID3D11Buffer> constants;
     UINT width = 0, height = 0, videoWidth = 0, videoHeight = 0;
-    HRESULT Initialize() {
-        HR(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    HRESULT Initialize(D3D_DRIVER_TYPE driver = D3D_DRIVER_TYPE_HARDWARE) {
+        HR(D3D11CreateDevice(nullptr, driver, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context));
         ComPtr<IDXGIDevice> dxgi; HR(device.As(&dxgi));
         ComPtr<IDXGIAdapter> adapter; HR(dxgi->GetAdapter(&adapter));
@@ -73,7 +73,7 @@ float4 pixel(V i) : SV_Target {
         d.SampleDesc.Count=1; d.Usage=D3D11_USAGE_DEFAULT; d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
         HR(device->CreateTexture2D(&d,nullptr,&texture)); HR(device->CreateShaderResourceView(texture.Get(),nullptr,&view)); return S_OK;
     }
-    HRESULT Render(const BYTE* bytes, UINT w, UINT h, bool fill, bool mirror) {
+    HRESULT Render(const BYTE* bytes, UINT w, UINT h, bool fill, bool mirror, bool present = true) {
         if (videoWidth!=w || videoHeight!=h) {
             ID3D11ShaderResourceView* empty[2]{}; context->PSSetShaderResources(0,2,empty);
             HR(Texture(w,h,DXGI_FORMAT_R8_UNORM,y,yView));
@@ -94,7 +94,7 @@ float4 pixel(V i) : SV_Target {
         ID3D11ShaderResourceView* inputs[]={yView.Get(),uvView.Get()}; context->PSSetShaderResources(0,2,inputs);
         context->Draw(4,0);
         // Non-blocking: preview must never hold up USB/decode/webcam publication.
-        HRESULT result=swap->Present(0,DXGI_PRESENT_DO_NOT_WAIT);
+        HRESULT result=present ? swap->Present(0,DXGI_PRESENT_DO_NOT_WAIT) : S_OK;
         return result==DXGI_ERROR_WAS_STILL_DRAWING ? S_FALSE : result;
     }
 };
@@ -111,7 +111,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall UCamPreviewResize(void* p, UI
     DXGI_MATRIX_3X2_F matrix{1/scale,0,0,1/scale,0,0}; return swap->SetMatrixTransform(&matrix);
 }
 extern "C" __declspec(dllexport) HRESULT __stdcall UCamPreviewRender(void* p, const BYTE* data, int length, UINT w, UINT h, int fill, int mirror) {
-    if (!p || !data || !w || !h || (w|h)&1 || w>4096 || h>4096 || size_t(length)<size_t(w)*h*3/2) return E_INVALIDARG;
+    if (!p || !data || !w || !h || ((w|h)&1)!=0 || length<0 || w>4096 || h>4096 || size_t(length)<size_t(w)*h*3/2) return E_INVALIDARG;
     return static_cast<Preview*>(p)->Render(data,w,h,fill!=0,mirror!=0);
 }
 extern "C" __declspec(dllexport) void __stdcall UCamPreviewDestroy(void* p) { delete static_cast<Preview*>(p); }
