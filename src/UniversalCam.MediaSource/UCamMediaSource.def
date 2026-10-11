@@ -1,0 +1,13 @@
+LIBRARY UCamMediaSource
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
+    DllRegisterServer PRIVATE
+    DllUnregisterServer PRIVATE
+    UCamOpenWriter
+    UCamWriteFrame
+    UCamCloseWriter
+    UCamStartCamera
+    UCamStopCamera
+    UCamRemoveCamera
+

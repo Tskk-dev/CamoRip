@@ -1,0 +1,111 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/repositories.config
+
+# Visual Studio / VS Code
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# .NET specific
+project.lock.json
+project.fragment.lock.json
+artifacts/
+build/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.pch
+*.pdb
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.vspscc
+*.vssscc
+
+# WinUI / Windows App SDK
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.msix
+*.appxbundle
+*.msixbundle
+*.appxupload
+*.msixupload
+
+# Generated files
+Generated Files/
+*.g.cs
+*.g.i.cs
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Office temp files (keep the actual docx)
+~$*.docx
+~$*.xlsx
+
+# AI tool settings
+.claude/
+.cursor/
+.aider*
+
+# Secrets / local config
+*.pfx
+*.p12
+appsettings.local.json
+secrets.json
+
+# Xcode — generated project files (use ios/project.yml + xcodegen to regenerate)
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xccheckout
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3

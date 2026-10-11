@@ -1,0 +1,23 @@
+# Default: normalize line endings to LF in repo, checkout as CRLF on Windows
+* text=auto eol=crlf
+
+# Binary files: no normalization
+*.png binary
+*.jpg binary
+*.ico binary
+*.gif binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.exe binary
+*.dll binary
+*.pdb binary
+*.pfx binary
+
+# XAML and XML: keep CRLF
+*.xaml text eol=crlf
+*.xml text eol=crlf
+*.csproj text eol=crlf
+*.sln text eol=crlf
+*.props text eol=crlf
+*.targets text eol=crlf
