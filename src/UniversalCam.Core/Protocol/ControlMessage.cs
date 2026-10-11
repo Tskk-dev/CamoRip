@@ -34,6 +34,9 @@ public abstract record ControlMessage
         var type = doc.RootElement.GetProperty("type").GetString();
         return type switch
         {
+            "camera_state"      => doc.Deserialize<CameraState>(_options),
+            "camera_settings"   => doc.Deserialize<CameraSettings>(_options),
+            "get_camera_state"  => new GetCameraState(),
             "welcome"           => doc.Deserialize<Welcome>(_options),
             "hello"             => doc.Deserialize<Hello>(_options),
             "configure"         => doc.Deserialize<Configure>(_options),
@@ -176,4 +179,32 @@ public sealed record CameraInfo
     [JsonPropertyName("position")]    public string Position   { get; init; } = string.Empty;
     [JsonPropertyName("type")]        public string Type       { get; init; } = string.Empty;
     [JsonPropertyName("zoom_factor")] public double ZoomFactor { get; init; } = 1.0;
+}
+
+public sealed record GetCameraState : ControlMessage { public override string Type => "get_camera_state"; }
+public sealed record CameraSettings : ControlMessage
+{
+    public override string Type => "camera_settings";
+    public long RequestId { get; init; }
+    public string CameraId { get; init; } = "";
+    public Dictionary<string, double> Values { get; init; } = new();
+}
+public sealed record ControlRange
+{
+    public double Min { get; init; }
+    public double Max { get; init; }
+}
+public sealed record CameraState : ControlMessage
+{
+    public override string Type => "camera_state";
+    public long RequestId { get; init; }
+    public string CameraId { get; init; } = "";
+    public string? Error { get; init; }
+    public bool TorchAvailable { get; init; }
+    public bool TorchOn { get; init; }
+    public bool AutoExposureSupported { get; init; }
+    public bool AutoFocusSupported { get; init; }
+    public bool AutoWhiteBalanceSupported { get; init; }
+    public Dictionary<string, ControlRange> Ranges { get; init; } = new();
+    public Dictionary<string, double> Values { get; init; } = new();
 }

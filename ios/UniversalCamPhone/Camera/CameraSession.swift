@@ -32,7 +32,7 @@ final class CameraSession: NSObject, ObservableObject {
     var onVideoSampleBuffer: ((CMSampleBuffer) -> Void)?
     var onError: ((String) -> Void)?
 
-    private let sessionQueue = DispatchQueue(label: "com.universalcam.camera.session", qos: .userInteractive)
+    let sessionQueue = DispatchQueue(label: "com.universalcam.camera.session", qos: .userInteractive)
     private let videoOutput = AVCaptureVideoDataOutput()
     private var configured = false
     private var requestedWidth: Int32 = 1920
@@ -67,6 +67,7 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     func stop() {
+        turnTorchOff()
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.captureSession.isRunning { self.captureSession.stopRunning() }
@@ -119,7 +120,7 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
-    private var currentDevice: AVCaptureDevice? {
+    var currentDevice: AVCaptureDevice? {
         captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first?.device
     }
 
@@ -205,7 +206,7 @@ final class CameraSession: NSObject, ObservableObject {
             let replacement = try AVCaptureDeviceInput(device: device)
             captureSession.beginConfiguration()
             let previous = captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first
-            if let previous { captureSession.removeInput(previous) }
+            if let previous { disableTorch(previous.device); captureSession.removeInput(previous) }
             guard captureSession.canAddInput(replacement) else {
                 if let previous { captureSession.addInput(previous) }
                 captureSession.commitConfiguration()

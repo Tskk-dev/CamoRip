@@ -6,6 +6,8 @@ namespace UniversalCam.Core;
 /// <summary>USB-only handshake and video streaming state for the Windows companion.</summary>
 public sealed class ConnectionManager : IAsyncDisposable
 {
+    public event EventHandler<CameraState>? CameraStateReceived;
+    public bool SupportsCameraSettings { get; private set; }
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;
     public event EventHandler<AvailableCameras>? CamerasReceived;
@@ -86,6 +88,8 @@ public sealed class ConnectionManager : IAsyncDisposable
     public Task ListCamerasAsync(CancellationToken ct = default) => SendAsync(new ListCameras(), ct);
     public Task SwitchCameraAsync(string? cameraId, CancellationToken ct = default) =>
         SendAsync(new SwitchCamera { CameraId = cameraId }, ct);
+    public Task RequestCameraStateAsync(CancellationToken ct = default) => SendAsync(new GetCameraState(), ct);
+    public Task SetCameraSettingsAsync(CameraSettings settings, CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(settings, ct) : Task.CompletedTask;
     public Task PingAsync(CancellationToken ct = default) =>
         SendAsync(new Ping { Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, ct);
 
@@ -111,6 +115,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         {
             Interlocked.Increment(ref _generation);
             _sessionReady = false;
+            SupportsCameraSettings = false;
             _configurationPending = false;
             _startAfterConfigure = false;
             ActiveTransport = TransportType.None;
@@ -143,6 +148,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                 SetState(TransportState.Error);
                 return;
             }
+            SupportsCameraSettings = hello.Capabilities.Contains("camera_controls_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
             _desiredStreaming = true;
@@ -155,6 +161,9 @@ public sealed class ConnectionManager : IAsyncDisposable
         if (ActiveTransport != TransportType.USB) return;
         switch (message)
         {
+            case CameraState cameraState:
+                CameraStateReceived?.Invoke(this, cameraState);
+                break;
             case ConfigureAck ack:
                 var generation = Volatile.Read(ref _generation);
                 var start = _configurationPending && _configurationGeneration == generation &&

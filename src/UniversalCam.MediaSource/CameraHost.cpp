@@ -26,7 +26,7 @@ struct CameraHost {
         }
         if (SUCCEEDED(hr)) hr = MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource,
             MFVirtualCameraLifetime_Session, MFVirtualCameraAccess_CurrentUser,
-            L"USB iPhone Camera", UniversalCamClsid, nullptr, 0, &camera);
+            L"CamoRip", UniversalCamClsid, nullptr, 0, &camera);
         if (SUCCEEDED(hr)) hr = camera->SetString(UCAM_FRAME_PATH, path.c_str());
         if (SUCCEEDED(hr)) hr = camera->Start(nullptr);
         ready.set_value(hr);
@@ -74,7 +74,7 @@ extern "C" HRESULT __stdcall UCamRemoveCamera() {
             ComPtr<IMFVirtualCamera> camera;
             hr = MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource,
                 MFVirtualCameraLifetime_Session, MFVirtualCameraAccess_CurrentUser,
-                L"USB iPhone Camera", UniversalCamClsid, nullptr, 0, &camera);
+                L"CamoRip", UniversalCamClsid, nullptr, 0, &camera);
             if (SUCCEEDED(hr)) { hr = camera->Remove(); camera->Shutdown(); camera.Reset(); }
             MFShutdown();
         }
@@ -83,4 +83,5 @@ extern "C" HRESULT __stdcall UCamRemoveCamera() {
     cleanup.join();
     return result;
 }
+
 

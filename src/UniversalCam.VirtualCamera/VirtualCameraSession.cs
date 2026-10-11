@@ -50,7 +50,7 @@ public sealed class VirtualCameraSession : IDisposable
             _bridge.Open();
             WritePlaceholder();
             _server = new MfVirtualCameraServer(_bridge.Path);
-            SetStatus("USB iPhone Camera is available in camera apps (1080p60).");
+            SetStatus("CamoRip is available in camera apps (1080p60).");
         }
         catch (DllNotFoundException)
         {
@@ -138,5 +138,6 @@ public sealed class VirtualCameraSession : IDisposable
         }
     }
 }
+
 
 

@@ -108,6 +108,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     func stopStreaming(notifyPeer: Bool = true) {
+        cameraSession?.turnTorchOff()
         startRequested = false
         pendingStartNotifiesPeer = false
         wantsStreaming = false
@@ -150,6 +151,7 @@ final class ConnectionManager: ObservableObject {
             if self.activeTransport != nil {
                 self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
                 self.transport.sendControl(.switchCameraAck(cameraID: info.id, cameraName: info.name))
+                self.sendCameraState()
             }
             if self.wantsStreaming || self.startRequested {
                 let notify = self.pendingStartNotifiesPeer
@@ -187,6 +189,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func resetSession() {
+        cameraSession?.turnTorchOff()
         handshakeGeneration += 1
         operationGeneration += 1
         negotiated = false
@@ -211,9 +214,10 @@ final class ConnectionManager: ObservableObject {
         }
         switch message {
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
+            sendCameraState()
         case .configure(let resolution, let fps, let codec, let requestedBitrate):
             let dimensions = resolution.split(separator: "x")
             guard codec.lowercased() == "h264", dimensions.count == 2,
@@ -241,6 +245,7 @@ final class ConnectionManager: ObservableObject {
                     self.state = .connected
                     self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
                     self.sendCameras()
+                    self.sendCameraState()
                     if self.startRequested {
                         let notify = self.pendingStartNotifiesPeer
                         self.startRequested = false
@@ -256,6 +261,15 @@ final class ConnectionManager: ObservableObject {
         case .startStream: startStreaming()
         case .stopStream: stopStreaming()
         case .switchCamera(let id): switchCamera(cameraID: id)
+        case .getCameraState: sendCameraState()
+        case .cameraSettings(let request):
+            let generation = handshakeGeneration
+            let operation = operationGeneration
+            cameraSession?.applyControls(request, allowTorch: state == .streaming) { [weak self] snapshot in
+                guard let self, generation == self.handshakeGeneration, operation == self.operationGeneration,
+                      self.activeTransport == .usb else { return }
+                self.transport.sendControl(.cameraState(snapshot))
+            }
         case .listCameras: sendCameras()
         case .ping(let ts): transport.sendControl(.pong(ts: ts))
         case .pong(let ts):
@@ -283,6 +297,16 @@ final class ConnectionManager: ObservableObject {
         }
     }
 
+    private func sendCameraState() {
+        let generation = handshakeGeneration
+        let operation = operationGeneration
+        cameraSession?.readControls { [weak self] state in
+            guard let self, generation == self.handshakeGeneration, operation == self.operationGeneration,
+                  self.activeTransport == .usb else { return }
+            self.transport.sendControl(.cameraState(state))
+        }
+    }
+
     private func sendCameras() {
         guard let camera = cameraSession else { return }
         transport.sendControl(.availableCameras(cameras: camera.availableCameras, currentCameraID: camera.currentCameraID))
@@ -305,6 +329,7 @@ final class ConnectionManager: ObservableObject {
         pingTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let self else { return }
             if Date().timeIntervalSince(self.lastPong) > 10 { self.transport.disconnect(); return }
+            self.sendCameraState()
             self.transport.sendControl(.ping(ts: Int64(Date().timeIntervalSince1970 * 1000)))
         }
     }
@@ -314,6 +339,9 @@ final class ConnectionManager: ObservableObject {
 enum ControlMessage: Codable {
     case hello(deviceName: String, capabilities: [String])
     case welcome
+    case getCameraState
+    case cameraSettings(CameraControlRequest)
+    case cameraState(CameraControlState)
     case configure(resolution: String, fps: Int, codec: String, bitrate: Int)
     case configureAck(resolution: String, fps: Int)
     case startStream
@@ -329,6 +357,7 @@ enum ControlMessage: Codable {
     case orientationChanged(orientation: String)
 
     private enum CodingKeys: String, CodingKey {
+        case request_id, camera_id, values, error, torch_available, torch_on, auto_exposure_supported, auto_focus_supported, auto_white_balance_supported, ranges
         case type, deviceName, capabilities, resolution, fps, codec, bitrate, ts
         case cameraID, cameraName, cameras, currentCameraID
         case orientation
@@ -337,6 +366,9 @@ enum ControlMessage: Codable {
 
     var type: String {
         switch self {
+        case .getCameraState:      return "get_camera_state"
+        case .cameraSettings:      return "camera_settings"
+        case .cameraState:         return "camera_state"
         case .hello:               return "hello"
         case .welcome:             return "welcome"
         case .configure:           return "configure"
@@ -361,6 +393,11 @@ enum ControlMessage: Codable {
         try container.encode(type, forKey: .type)
 
         switch self {
+        case .getCameraState: break
+        case .cameraSettings(let request):
+            try request.encode(to: encoder)
+        case .cameraState(let state):
+            try state.encode(to: encoder)
         case .hello(let deviceName, let capabilities):
             try container.encode(deviceName, forKey: .deviceName)
             try container.encode(capabilities, forKey: .capabilities)
@@ -399,6 +436,9 @@ enum ControlMessage: Codable {
         let type = try container.decode(String.self, forKey: .type)
 
         switch type {
+        case "get_camera_state": self = .getCameraState
+        case "camera_settings": self = .cameraSettings(try CameraControlRequest(from: decoder))
+        case "camera_state": self = .cameraState(try CameraControlState(from: decoder))
         case "hello":
             let deviceName = try container.decode(String.self, forKey: .deviceName)
             let capabilities = try container.decode([String].self, forKey: .capabilities)

@@ -37,7 +37,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Installer compilation failed.' }
       - uses: actions/upload-artifact@v4
         with:
-          name: usb-iphone-camera-windows-x64
+          name: camorip-windows-x64
           path: artifacts/installer/*.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
@@ -78,8 +78,8 @@ jobs:
           xcrun lipo "$APP/UniversalCam" -verify_arch arm64
           mkdir -p artifacts/ipa/Payload
           cp -R "$APP" artifacts/ipa/Payload/
-          (cd artifacts/ipa && zip -qr ../USB-iPhone-Camera-ios15-unsigned.ipa Payload)
-          unzip -t artifacts/USB-iPhone-Camera-ios15-unsigned.ipa
+          (cd artifacts/ipa && zip -qr ../CamoRip-ios15-unsigned.ipa Payload)
+          unzip -t artifacts/CamoRip-ios15-unsigned.ipa
       - name: Check phone display lifecycle and video packet conversion
         working-directory: ios
         run: |
@@ -98,6 +98,6 @@ jobs:
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
-          name: usb-iphone-camera-ios-unsigned
-          path: artifacts/USB-iPhone-Camera-ios15-unsigned.ipa
+          name: camorip-ios-unsigned
+          path: artifacts/CamoRip-ios15-unsigned.ipa
           if-no-files-found: error

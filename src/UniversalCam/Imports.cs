@@ -1,3 +1,2 @@
-global using UniversalCam.Views;
-global using System.Windows;
-global using System.Windows.Controls;
+global using Microsoft.UI.Xaml;
+global using Microsoft.UI.Xaml.Controls;

@@ -1,402 +1,205 @@
-using System.ComponentModel;
 using System.Diagnostics;
-using System.Threading.Channels;
-using System.Windows;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using UniversalCam.Core;
+using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using UniversalCam.Core.Protocol;
 using UniversalCam.Core.Transport;
-using UniversalCam.Core.Video;
-using UniversalCam.VirtualCamera;
 
 namespace UniversalCam.Views;
 
-public partial class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
-    private readonly ConnectionManager _connection = new();
-    private readonly H264Decoder _decoder = new(reuseFrameBuffers: true);
-    private readonly CompressedVideoQueue _frames = new();
-    // Only independent decoded frames may be coalesced. Slow consumers get the
-    // newest image without blocking H.264 input or accumulating video latency.
-    private readonly LatestFrameMailbox<(DecodedFrame Frame, long Generation)> _cameraFramesQueue;
-    private readonly Channel<(DecodedFrame Frame, long Generation)> _previewFramesQueue;
-    private readonly CancellationTokenSource _shutdown = new();
-    private readonly StageTiming _decodeTiming = new(), _cameraTiming = new(), _previewTiming = new();
-    private VirtualCameraSession? _camera;
-    private Task? _decodeTask, _cameraTask, _previewTask, _metricsTask;
-    private WriteableBitmap? _bitmap;
-    // _previewPending keeps conversion and the UI copy from accessing this simultaneously.
-    private readonly byte[] _previewPixels = new byte[640 * 360 * 4];
-    private bool _streaming;
-    private volatile bool _closing;
-    private bool _closed;
-    private int _previewPending, _decodedWidth, _decodedHeight;
-    private long _decodingGeneration;
-    private long _receivedFrames, _decodedFrames, _cameraFrames, _previewFrames;
-    private long _cameraCoalesced, _previewCoalesced, _publishFailures;
-    private long _lastUsbTicks, _lastDecodedTicks, _lastCameraTicks;
-    private long _lastMetricsTicks, _lastReceivedFrames, _lastDecodedFrames, _lastCameraFrames, _lastPreviewFrames;
-    private long _lastQueueDrops, _lastRecoveries, _lastCameraCoalesced, _lastPreviewCoalesced, _lastPublishFailures;
-    private TimeSpan _lastCpuTime;
-    private long _lastAllocatedBytes;
-    private readonly int[] _lastCollections = new int[3];
-
-    public MainWindow()
+    private readonly App _app;
+    private readonly StreamingService _service;
+    private readonly Dictionary<string, double> _pending = new();
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _commands;
+    private readonly Dictionary<string, Slider> _sliders;
+    private CameraState? _state;
+    private bool _ready, _updating, _exiting, _hidden, _fullscreen, _sending;
+    private long _requestId, _confirmedId, _lastSent;
+    private GpuPreview? _gpu;
+    internal MainWindow(App app, StreamingService service)
     {
+        _app = app; _service = service;
         InitializeComponent();
-        Loaded += OnLoaded;
-        Closing += OnClosing;
-        _cameraFramesQueue = new(queued => { queued.Frame.Release(); Interlocked.Increment(ref _cameraCoalesced); });
-        _previewFramesQueue = LatestFrames(() => Interlocked.Increment(ref _previewCoalesced));
-    }
-
-    private async void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        try
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1180, 820));
+        AppWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "universal_cam.ico"));
+        SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+        _sliders = new() { ["exposure_bias"] = ExposureBias, ["iso"] = Iso, ["shutter_ms"] = Shutter,
+            ["focus"] = Focus, ["temperature"] = Temperature, ["tint"] = Tint, ["torch_level"] = TorchLevel };
+        var settings = App.Settings;
+        CloseToTray.IsOn = settings.CloseToTray; StartMinimized.IsOn = settings.StartMinimized;
+        LaunchAtSignIn.IsOn = settings.LaunchAtSignIn; Logging.IsOn = settings.Logging;
+        PreviewRate.SelectedIndex = settings.PreviewFps switch { 30 => 1, 15 => 2, 0 => 3, _ => 0 };
+        FillPreview.IsOn = settings.PreviewFill; MirrorPreview.IsOn = settings.PreviewMirror;
+        _service.PreviewFps = settings.PreviewFps;
+        Navigation.SelectedItem = Navigation.MenuItems[0];
+        _service.Changed += Refresh;
+        _service.PreviewFrame = frame =>
         {
-            _camera = new VirtualCameraSession();
-            _camera.StatusChanged += (_, status) =>
-            {
-                App.Log("INFO", $"Virtual camera: {status}");
-                Ui(() => CameraStatus.Text = status);
-            };
-            CameraStatus.Text = _camera.StatusMessage;
-            App.Log("INFO", $"Virtual camera status: {_camera.StatusMessage}");
-        }
-        catch (Exception ex)
-        {
-            CameraStatus.Text = $"Windows webcam could not start: {ex.Message}";
-            App.Log(ex);
-        }
-
-        _decoder.BackendChanged += (_, status) =>
-        {
-            App.Log("INFO", $"Decoder backend: {status}");
-            Ui(() => DecoderStatus.Text = status.StartsWith("D3D11 hardware confirmed")
-                ? "Video decoding: GPU accelerated"
-                : status.StartsWith("software") ? "Video decoding: CPU fallback (see diagnostic logs)"
-                : "Video decoding: starting GPU decoder");
+            if (_gpu is null) _gpu = new GpuPreview(Preview);
+            _gpu.Render(frame, App.Settings.PreviewFill, App.Settings.PreviewMirror);
+            Waiting.Visibility = Visibility.Collapsed;
         };
-        _decoder.FrameDecoded += (_, frame) =>
+        _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
+        _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
-            var generation = Interlocked.Read(ref _decodingGeneration);
-            if (!IsCurrent(generation)) return;
-            Interlocked.Increment(ref _decodedFrames);
-            Interlocked.Exchange(ref _lastDecodedTicks, Stopwatch.GetTimestamp());
-            Volatile.Write(ref _decodedWidth, frame.Width);
-            Volatile.Write(ref _decodedHeight, frame.Height);
-            _cameraFramesQueue.Publish((frame.Retain(), generation));
-            var preview = (frame.Retain(), generation);
-            if (!_previewFramesQueue.Writer.TryWrite(preview)) preview.Item1.Release();
-        };
-        _connection.Diagnostic += (_, message) => Ui(() => Diagnostic.Text = message);
-        _connection.Diagnostic += (_, message) => App.Log("INFO", $"Connection: {message}");
-        _connection.ConfigurationAcknowledged += (_, configuration) => Ui(() =>
-            VideoStatus.Text = $"Capture: {configuration.Resolution} at {configuration.Fps} fps · Webcam: 1080p60");
-        _connection.ConfigurationAcknowledged += (_, configuration) => App.Log("INFO", $"Capture configured: {configuration.Resolution} at {configuration.Fps} fps.");
-        _connection.StreamStateChanged += (_, streaming) =>
-        {
-            if (!streaming) _frames.Reset("stream stopped");
-            _camera?.OnStreamStateChanged(this, streaming);
-            Ui(() => SetStreaming(streaming));
-        };
-        _connection.CameraSwitched += (_, _) =>
-        {
-            _frames.Reset("camera switched");
-        };
-        _connection.StateChanged += OnConnectionState;
-        _connection.FrameReceived += (_, frame) =>
-        {
-            if (!frame.IsVideo || _closing) return;
-            Interlocked.Increment(ref _receivedFrames);
-            Interlocked.Exchange(ref _lastUsbTicks, Stopwatch.GetTimestamp());
-            _frames.Enqueue(frame);
-        };
-        // A dedicated MTA thread keeps decode independent of thread-pool/UI load.
-        _decodeTask = Task.Factory.StartNew(DecodeFrames, CancellationToken.None,
-            TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        _cameraTask = Task.Factory.StartNew(PublishCameraFrames, CancellationToken.None,
-            TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        _previewTask = Task.Run(PreviewFrames);
-        _metricsTask = Task.Run(CollectMetrics);
-        App.Log("INFO", "Pipeline v4: pooled NV12 buffers; MMCSS dedicated decoder/publisher; D3D11 hardware preferred; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
-        try { await _connection.StartAsync(); }
-        catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
-    }
-
-    private void OnConnectionState(object? sender, TransportState state)
-    {
-        _frames.Reset($"USB state {state}");
-        try { _camera?.OnConnectionStateChanged(sender, state); }
-        catch (Exception ex) { App.Log(ex); }
-        Ui(() =>
-        {
-            var connected = state == TransportState.Connected;
-            SwitchCamera.IsEnabled = StreamButton.IsEnabled = connected;
-            DeviceStatus.Text = connected ? $"{_connection.DeviceName} · USB connected" : "Waiting for iPhone over USB";
-            if (!connected)
-            {
-                SetStreaming(false);
-                Waiting.Text = "Waiting for USB video";
-            }
-            Diagnostic.Text = _connection.StatusMessage;
-            if (connected) _ = ConfigurePhone();
+            _pending.Clear(); _state = null; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
+            ControlStatus.Text = state == TransportState.Connected && !_service.Connection.SupportsCameraSettings
+                ? "Update the iPhone app to use camera controls." : "Waiting for phone camera capabilities";
         });
-    }
-
-    private async Task ConfigurePhone()
-    {
-        try { await _connection.ConfigureAsync("1920x1080", 60, "h264", 12_000_000); }
-        catch (Exception ex) { Ui(() => Diagnostic.Text = ex.Message); App.Log(ex); }
-    }
-
-    private static Channel<(DecodedFrame Frame, long Generation)> LatestFrames(Action dropped) =>
-        Channel.CreateBounded<(DecodedFrame, long)>(new BoundedChannelOptions(1)
-        { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest }, queued => { queued.Item1.Release(); dropped(); });
-
-    private bool IsCurrent(long generation) => !_closing && _connection.IsStreaming && generation == _frames.Generation;
-
-    private void DecodeFrames()
-    {
-        long generation = -1;
-        using var scheduling = new VideoThreadScheduling();
-        App.Log("INFO", $"Decoder scheduling: {scheduling.Status}");
-        try
+        _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; Adjustments.IsEnabled = false; });
+        _commands = DispatcherQueue.CreateTimer(); _commands.Interval = TimeSpan.FromMilliseconds(50);
+        _commands.Tick += async (_, _) => await FlushCommands(); _commands.Start();
+        AppWindow.Closing += (_, e) =>
         {
-            foreach (var queued in _frames.ReadAll())
-            {
-                if (_closing) break;
-                if (!IsCurrent(queued.Generation)) continue;
-                if (generation != queued.Generation)
-                {
-                    generation = queued.Generation;
-                    _decoder.RequestReset();
-                    App.Log("INFO", $"Decoder recovery: {queued.ResetReason}; generation {generation}; keyframe={queued.Frame.Header.IsKeyframe}.");
-                }
-                var started = Stopwatch.GetTimestamp();
-                try
-                {
-                    Interlocked.Exchange(ref _decodingGeneration, generation);
-                    _decoder.Feed(queued.Frame);
-                }
-                catch (Exception ex)
-                {
-                    _frames.Reset("decoder error");
-                    Ui(() => Diagnostic.Text = $"Video decoder is waiting for a new keyframe: {ex.Message}");
-                    App.Log(ex);
-                }
-                finally { _decodeTiming.Record(started); }
-            }
-        }
-        catch (Exception ex) { App.Log(ex); }
+            if (_exiting) return;
+            e.Cancel = true;
+            if (App.Settings.CloseToTray) HideToTray(); else App.Run(_app.ExitAsync);
+        };
+        AppWindow.Changed += (_, _) => UpdatePreviewVisibility();
+        _ready = true;
     }
-
-    private void PublishCameraFrames()
+    private void Refresh()
     {
-        using var scheduling = new VideoThreadScheduling();
-        App.Log("INFO", $"Camera publisher scheduling: {scheduling.Status}");
-        try
-        {
-            foreach (var queued in _cameraFramesQueue.ReadAll())
-            {
-                if (!IsCurrent(queued.Generation)) { queued.Frame.Release(); continue; }
-                var started = Stopwatch.GetTimestamp();
-                try
-                {
-                    if (_camera?.TryPublishFrame(queued.Frame) == true)
-                    {
-                        Interlocked.Increment(ref _cameraFrames);
-                        Interlocked.Exchange(ref _lastCameraTicks, Stopwatch.GetTimestamp());
-                    }
-                    else Interlocked.Increment(ref _publishFailures);
-                }
-                catch (Exception ex) { Interlocked.Increment(ref _publishFailures); App.Log(ex); }
-                finally { _cameraTiming.Record(started); queued.Frame.Release(); }
-            }
-        }
-        catch (Exception ex) { App.Log(ex); }
+        foreach (var (key, value) in _service.Status)
+            if (Root.FindName(key) is TextBlock text) text.Text = value;
+        StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected;
+        StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
+        if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }
+        UpdatePreviewVisibility();
     }
-
-    private async Task PreviewFrames()
+    private void UpdatePreviewVisibility()
     {
-        try
-        {
-            while (await _previewFramesQueue.Reader.WaitToReadAsync())
-            {
-                // Wait before taking the image so the conversion uses the newest
-                // frame, rather than one that has aged during this preview interval.
-                await Task.Delay(66, _shutdown.Token);
-                if (!_previewFramesQueue.Reader.TryRead(out var queued)) continue;
-                try { if (IsCurrent(queued.Generation)) RenderPreview(queued.Frame, queued.Generation); }
-                finally { queued.Frame.Release(); }
-            }
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
-        catch (Exception ex) { App.Log(ex); }
+        _service.PreviewVisible = !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
+        bool visible = _service.PreviewVisible && _service.PreviewFps > 0 && _service.Streaming;
+        Preview.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!visible) { Waiting.Text = _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for USB video"; Waiting.Visibility = Visibility.Visible; }
     }
-
-    private async Task CollectMetrics()
+    internal void HideToTray() { _hidden = true; UpdatePreviewVisibility(); AppWindow.Hide(); }
+    internal void ShowFromTray()
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
-        using var process = Process.GetCurrentProcess();
-        _lastMetricsTicks = Stopwatch.GetTimestamp();
-        _lastCpuTime = process.TotalProcessorTime;
-        _lastAllocatedBytes = GC.GetTotalAllocatedBytes();
-        for (var index = 0; index < 3; index++) _lastCollections[index] = GC.CollectionCount(index);
-        try
-        {
-            while (await timer.WaitForNextTickAsync(_shutdown.Token)) WriteMetrics(process);
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
-        catch (Exception ex) { App.Log(ex); }
+        _hidden = false; AppWindow.Show();
+        if (AppWindow.Presenter is OverlappedPresenter p) p.Restore();
+        Activate(); UpdatePreviewVisibility();
     }
-
-    private void WriteMetrics(Process process)
+    internal void PrepareExit() { _exiting = true; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
+    private void OnNavigation(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        var now = Stopwatch.GetTimestamp();
-        var seconds = Stopwatch.GetElapsedTime(_lastMetricsTicks, now).TotalSeconds;
-        _lastMetricsTicks = now;
-        var received = Interlocked.Read(ref _receivedFrames);
-        var decoded = Interlocked.Read(ref _decodedFrames);
-        var camera = Interlocked.Read(ref _cameraFrames);
-        var preview = Interlocked.Read(ref _previewFrames);
-        var queue = _frames.Snapshot();
-        var receivedFps = (received - _lastReceivedFrames) / seconds;
-        var decodedFps = (decoded - _lastDecodedFrames) / seconds;
-        var cameraFps = (camera - _lastCameraFrames) / seconds;
-        var previewFps = (preview - _lastPreviewFrames) / seconds;
-        var drops = queue.Drops - _lastQueueDrops;
-        var recoveries = queue.Recoveries - _lastRecoveries;
-        _lastReceivedFrames = received; _lastDecodedFrames = decoded;
-        _lastCameraFrames = camera; _lastPreviewFrames = preview;
-        _lastQueueDrops = queue.Drops; _lastRecoveries = queue.Recoveries;
-        var cameraCoalesced = Interlocked.Read(ref _cameraCoalesced);
-        var previewCoalesced = Interlocked.Read(ref _previewCoalesced);
-        var failures = Interlocked.Read(ref _publishFailures);
-        var detail = $"coalesced camera/preview={cameraCoalesced - _lastCameraCoalesced}/{previewCoalesced - _lastPreviewCoalesced}; publish failures={failures - _lastPublishFailures}";
-        _lastCameraCoalesced = cameraCoalesced; _lastPreviewCoalesced = previewCoalesced; _lastPublishFailures = failures;
-        var timing = $"stage avg/max(count): decode={_decodeTiming.TakeSnapshot()} publish={_cameraTiming.TakeSnapshot()} preview={_previewTiming.TakeSnapshot()}";
-        process.Refresh();
-        var cpuTime = process.TotalProcessorTime;
-        var cpu = (cpuTime - _lastCpuTime).TotalSeconds / seconds / Environment.ProcessorCount * 100;
-        _lastCpuTime = cpuTime;
-        var allocated = GC.GetTotalAllocatedBytes();
-        var allocationRate = (allocated - _lastAllocatedBytes) / seconds / 1048576;
-        _lastAllocatedBytes = allocated;
-        var collections = new int[3];
-        for (var index = 0; index < 3; index++)
-        {
-            var current = GC.CollectionCount(index);
-            collections[index] = current - _lastCollections[index];
-            _lastCollections[index] = current;
-        }
-        if (!_connection.IsStreaming) return;
-        var message = $"Pipeline fps: USB {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · preview {previewFps:F1} · queue drops {drops}";
-        Ui(() => PerformanceStatus.Text = message);
-        App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB; allocation={allocationRate:F1}MiB/s GC0/1/2={string.Join("/", collections)}");
+        if (CameraPage is null) return;
+        var selected = (args.SelectedItem as NavigationViewItem)?.Tag as string;
+        CameraPage.Visibility = selected == "camera" ? Visibility.Visible : Visibility.Collapsed;
+        AdjustmentsPage.Visibility = selected == "adjustments" ? Visibility.Visible : Visibility.Collapsed;
+        PreviewPage.Visibility = selected == "preview" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPage.Visibility = selected == "settings" ? Visibility.Visible : Visibility.Collapsed;
     }
-
-    private static string FrameAge(long ticks, long now) => ticks == 0 ? "none" : $"{Math.Max(0, Stopwatch.GetElapsedTime(ticks, now).TotalMilliseconds):F0}";
-
-    private void OnOpenLogs(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = App.LogDirectory,
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex) { App.Log(ex); Diagnostic.Text = $"Could not open logs: {ex.Message}"; }
-    }
-
-    private void RenderPreview(DecodedFrame frame, long generation)
-    {
-        if (_closing || Interlocked.Exchange(ref _previewPending, 1) != 0) return;
-        const int previewWidth = 640, previewHeight = 360;
-        var started = Stopwatch.GetTimestamp();
-        byte[] preview;
-        try { preview = NV12Converter.CreateBgraPreview(frame.Data, frame.Width, frame.Height, previewWidth, previewHeight, _previewPixels); }
-        catch (Exception ex)
-        {
-            Interlocked.Exchange(ref _previewPending, 0);
-            App.Log(ex);
-            return;
-        }
-        finally { _previewTiming.Record(started); }
-        Ui(() =>
-        {
-            try
-            {
-                if (!IsCurrent(generation)) return;
-                if (_bitmap is null || _bitmap.PixelWidth != previewWidth || _bitmap.PixelHeight != previewHeight)
-                    _bitmap = new WriteableBitmap(previewWidth, previewHeight, 96, 96, PixelFormats.Bgra32, null);
-                _bitmap.WritePixels(new Int32Rect(0, 0, previewWidth, previewHeight), preview, previewWidth * 4, 0);
-                Preview.Source = _bitmap;
-                Interlocked.Increment(ref _previewFrames);
-                Waiting.Visibility = Visibility.Collapsed;
-            }
-            finally { Interlocked.Exchange(ref _previewPending, 0); }
-        });
-    }
-
-    private void SetStreaming(bool streaming)
-    {
-        _streaming = streaming;
-        StreamButton.Content = streaming ? "Stop video" : "Start video";
-        if (!streaming)
-        {
-            Preview.Source = null;
-            Waiting.Text = "Video stopped";
-            Waiting.Visibility = Visibility.Visible;
-        }
-    }
-
-    private async void OnToggleStream(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var start = !_streaming;
-            if (start) await _connection.StartStreamAsync();
-            else await _connection.StopStreamAsync();
-        }
-        catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
-    }
-
+    private async Task Invoke(Func<Task> action)
+    { try { await action(); } catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); } }
+    private async void OnToggleStream(object sender, RoutedEventArgs e) => await Invoke(_service.ToggleStreamAsync);
     private async void OnSwitchCamera(object sender, RoutedEventArgs e)
     {
-        try { await _connection.SwitchCameraAsync(null); }
+        _pending.Clear(); _state = null; Adjustments.IsEnabled = Torch.IsEnabled = false;
+        await Invoke(_service.SwitchCameraAsync);
+    }
+    private void OnAdjustment(object sender, RangeBaseValueChangedEventArgs e)
+    { if (sender is Slider slider && slider.Tag is string key) Queue(key, e.NewValue); }
+    private void OnExposureMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_exposure", AutoExposure.IsOn ? 1 : 0); UpdateEnabled(); } }
+    private void OnFocusMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_focus", AutoFocus.IsOn ? 1 : 0); UpdateEnabled(); } }
+    private void OnWhiteBalanceMode(object sender, RoutedEventArgs e) { if (_ready && !_updating) { Queue("auto_white_balance", AutoWhiteBalance.IsOn ? 1 : 0); UpdateEnabled(); } }
+    private void OnTorch(object sender, RoutedEventArgs e) => Queue("torch_on", Torch.IsOn ? 1 : 0);
+    private void OnTorchLevel(object sender, RangeBaseValueChangedEventArgs e) => Queue("torch_level", e.NewValue);
+    internal void ToggleTorch() { if (_state?.TorchAvailable == true && _service.Streaming) Queue("torch_on", _state.TorchOn ? 0 : 1); }
+    private void OnReset(object sender, RoutedEventArgs e) { _pending.Clear(); Queue("reset", 1); }
+    private void Queue(string key, double value)
+    {
+        if (!_ready || _updating || _state is null || !_service.Connected) return;
+        _pending[key] = value; ControlStatus.Text = "Applying on iPhone…";
+    }
+    private async Task FlushCommands()
+    {
+        if (_sending || !_service.Connected || _state is null) return;
+        if (_pending.Count == 0)
+        {
+            if (_requestId > _confirmedId && Stopwatch.GetElapsedTime(_lastSent).TotalSeconds > 5)
+            { _confirmedId = _requestId; ControlStatus.Text = "Phone did not confirm the change. Reconnecting may help."; }
+            return;
+        }
+        var request = new CameraSettings { RequestId = ++_requestId, CameraId = _state.CameraId, Values = new(_pending) };
+        _pending.Clear(); _sending = true; _lastSent = Stopwatch.GetTimestamp();
+        try { await _service.Connection.SetCameraSettingsAsync(request); }
+        catch (Exception ex) { ControlStatus.Text = ex.Message; App.Log(ex); }
+        finally { _sending = false; }
+    }
+    private void ApplyState(CameraState state)
+    {
+        _state = state;
+        _updating = true;
+        try
+        {
+            foreach (var (key, slider) in _sliders)
+            {
+                if (state.Ranges.TryGetValue(key, out var range)) { slider.Minimum = range.Min; slider.Maximum = Math.Max(range.Min, range.Max); }
+                if (_pending.Count == 0 && (state.RequestId == 0 && _requestId == _confirmedId || state.RequestId >= _requestId) && state.Values.TryGetValue(key, out var value)) slider.Value = value;
+            }
+            if (_pending.Count == 0 && (state.RequestId >= _requestId || _confirmedId == _requestId))
+            {
+                AutoExposure.IsOn = state.Values.GetValueOrDefault("auto_exposure", 1) != 0;
+                AutoFocus.IsOn = state.Values.GetValueOrDefault("auto_focus", 1) != 0;
+                AutoWhiteBalance.IsOn = state.Values.GetValueOrDefault("auto_white_balance", 1) != 0;
+                Torch.IsOn = state.TorchOn;
+            }
+            if (state.RequestId >= _requestId) _confirmedId = state.RequestId;
+            if (state.Error is not null) ControlStatus.Text = state.Error;
+            else if (_pending.Count == 0 && _requestId == _confirmedId) ControlStatus.Text = "Confirmed by iPhone";
+            Adjustments.IsEnabled = _service.Connected;
+            UpdateEnabled();
+        }
+        finally { _updating = false; }
+    }
+    private void UpdateEnabled()
+    {
+        if (_state is null) return;
+        foreach (var (key, slider) in _sliders) slider.IsEnabled = _state.Ranges.ContainsKey(key);
+        AutoExposure.IsEnabled = _state.AutoExposureSupported;
+        AutoFocus.IsEnabled = _state.AutoFocusSupported;
+        AutoWhiteBalance.IsEnabled = _state.AutoWhiteBalanceSupported;
+        Iso.IsEnabled &= !AutoExposure.IsOn; Shutter.IsEnabled &= !AutoExposure.IsOn;
+        ExposureBias.IsEnabled &= AutoExposure.IsOn;
+        Focus.IsEnabled &= !AutoFocus.IsOn;
+        Temperature.IsEnabled &= !AutoWhiteBalance.IsOn; Tint.IsEnabled &= !AutoWhiteBalance.IsOn;
+        Torch.IsEnabled = _state.TorchAvailable && _service.Streaming;
+        TorchLevel.IsEnabled = Torch.IsEnabled && _state.Ranges.ContainsKey("torch_level");
+    }
+    private void OnPreviewOptions(object sender, object e)
+    {
+        if (!_ready) return;
+        var settings = App.Settings;
+        settings.PreviewFps = int.Parse((string)((ComboBoxItem)PreviewRate.SelectedItem).Tag);
+        settings.PreviewFill = FillPreview.IsOn; settings.PreviewMirror = MirrorPreview.IsOn;
+        _service.PreviewFps = settings.PreviewFps; UpdatePreviewVisibility(); SaveSettings();
+    }
+    private void OnPreviewSize(object sender, SizeChangedEventArgs e) { _gpu?.Resize(); }
+    private void OnFullscreen(object sender, RoutedEventArgs e)
+    {
+        _fullscreen = !_fullscreen;
+        AppWindow.SetPresenter(_fullscreen ? AppWindowPresenterKind.FullScreen : AppWindowPresenterKind.Overlapped);
+        Navigation.IsPaneVisible = !_fullscreen;
+        Navigation.IsPaneOpen = !_fullscreen;
+        FullscreenExit.Visibility = _fullscreen ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private void OnSettings(object sender, RoutedEventArgs e)
+    {
+        if (!_ready) return;
+        var settings = App.Settings;
+        settings.CloseToTray = CloseToTray.IsOn; settings.StartMinimized = StartMinimized.IsOn;
+        if (settings.Logging != Logging.IsOn) { settings.Logging = Logging.IsOn; App.SetLogging(settings.Logging); }
+        try { if (settings.LaunchAtSignIn != LaunchAtSignIn.IsOn) settings.SetLaunchAtSignIn(LaunchAtSignIn.IsOn); SaveSettings(); }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
     }
-
-    private async void OnClosing(object? sender, CancelEventArgs e)
+    private void SaveSettings() { try { App.Settings.Save(); } catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); } }
+    private void OnOpenLogs(object sender, RoutedEventArgs e)
     {
-        if (_closed) return;
-        e.Cancel = true;
-        if (_closing) return;
-        _closing = true;
-        _shutdown.Cancel();
-        IsEnabled = false;
-        _frames.Complete();
-        try { await _connection.DisposeAsync(); }
-        catch (Exception ex) { App.Log(ex); }
-        if (_decodeTask is not null) await _decodeTask;
-        _cameraFramesQueue.Complete();
-        _previewFramesQueue.Writer.TryComplete();
-        await Task.WhenAll(new[] { _cameraTask, _previewTask, _metricsTask }.OfType<Task>());
-        while (_previewFramesQueue.Reader.TryRead(out var pending)) pending.Frame.Release();
-        _decoder.Dispose();
-        _shutdown.Dispose();
-        _camera?.Dispose();
-        _closed = true;
-        Close();
+        try { System.IO.Directory.CreateDirectory(App.LogDirectory); Process.Start(new ProcessStartInfo(App.LogDirectory) { UseShellExecute = true }); }
+        catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
     }
-
-    private void Ui(Action action)
-    {
-        if (Dispatcher.HasShutdownStarted) return;
-        Dispatcher.InvokeAsync(() => { if (!_closed) action(); });
-    }
+    private async void OnExit(object sender, RoutedEventArgs e) => await _app.ExitAsync();
 }
