@@ -52,3 +52,33 @@ every frame. The native decoder now packs only the valid display aperture;
 regression fixtures cover 1920x1080 and 50x50 cropped images. This synthetic
 finding identifies an unnecessary conversion, but does not measure the phone's
 actual bitstream or establish sustained 60 fps.
+
+## Pipeline v4 allocation and scheduling changes (2026-10-12)
+
+The dedicated decoder now consumes compressed frames synchronously with a monitor
+wakeup instead of blocking on an async iterator whose continuation uses the thread
+pool. Camera publishing uses a dedicated synchronous latest-frame mailbox. Both
+workers register with Windows MMCSS Capture and log whether registration succeeds:
+https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service
+
+The app enables bounded exact-size NV12 buffer reuse. Camera and preview consumers
+retain separate references, release them after copying, and release superseded or
+shutdown frames. The default decoder API still allocates independent frames for
+callers that retain event arguments without explicit ownership. Preview output and
+front-camera resize storage are also reused. There is no added prebuffer delay.
+Logs now include managed allocation MiB/s and generation 0/1/2 collection counts.
+
+A local repeated-IDR microbenchmark on AMD Radeon RX Vega 10, using the committed
+Hardware1080p.h264 fixture, warmed up for 20 feeds and measured 180 more feeds in
+each mode. Both modes reported D3D11 hardware confirmed and produced 180 frames.
+With the .NET 10 runtime available on this PC, allocating mode measured 534.23 MiB
+of managed allocation on the decode thread and 58 generation-2 collections; pooled
+mode measured 0.07 MiB and zero generation-2 collections. Mean feed time was
+7.27 ms versus 6.44 ms in that run. This isolates allocation cost: repeated IDRs,
+sequential runs, and absence of USB/camera-client load make it unsuitable as proof
+of sustained phone fps or a controlled end-to-end latency comparison.
+
+Retest the new Windows installer with the existing iPhone app, then compare live
+decode/publish rates, queue drops/recoveries, stage maximum times, allocations,
+and GC counts. Physical sustained 1080p60 and meeting-client smoothness remain
+pending for v4.

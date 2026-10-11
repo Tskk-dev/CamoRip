@@ -9,7 +9,7 @@ namespace UniversalCam.VirtualCamera;
 public static class NV12Converter
 {
     /// <summary>Creates a small BGRA preview from limited-range BT.709 NV12.</summary>
-    public static byte[] CreateBgraPreview(byte[] nv12, int width, int height, int previewWidth, int previewHeight)
+    public static byte[] CreateBgraPreview(byte[] nv12, int width, int height, int previewWidth, int previewHeight, byte[]? destination = null)
     {
         ArgumentNullException.ThrowIfNull(nv12);
         if (width < 2 || height < 2 || (width & 1) != 0 || (height & 1) != 0 ||
@@ -18,7 +18,11 @@ public static class NV12Converter
         if (previewWidth < 1 || previewHeight < 1)
             throw new ArgumentOutOfRangeException(nameof(previewWidth));
 
-        var bgra = new byte[checked(previewWidth * previewHeight * 4)];
+        var length = checked(previewWidth * previewHeight * 4);
+        if (destination is not null && destination.Length != length)
+            throw new ArgumentException("Invalid preview destination length.", nameof(destination));
+        var bgra = destination ?? new byte[length];
+        Array.Clear(bgra); // Clear letterboxing left by a previous aspect ratio.
         double scale = Math.Min((double)previewWidth / width, (double)previewHeight / height);
         int drawWidth = Math.Max(1, (int)(width * scale));
         int drawHeight = Math.Max(1, (int)(height * scale));
@@ -50,7 +54,7 @@ public static class NV12Converter
     /// Fits an NV12 frame into the fixed camera size without changing its color
     /// format. The common 1080p rear-camera path returns the decoder buffer as-is.
     /// </summary>
-    public static byte[] FitNv12(byte[] nv12, int width, int height, int outputWidth, int outputHeight)
+    public static byte[] FitNv12(byte[] nv12, int width, int height, int outputWidth, int outputHeight, byte[]? destinationBuffer = null)
     {
         ArgumentNullException.ThrowIfNull(nv12);
         if (width < 2 || height < 2 || (width & 1) != 0 || (height & 1) != 0 ||
@@ -61,7 +65,10 @@ public static class NV12Converter
         if (width == outputWidth && height == outputHeight) return nv12;
 
         int outputYBytes = checked(outputWidth * outputHeight);
-        var output = new byte[checked(outputYBytes + outputYBytes / 2)];
+        var length = checked(outputYBytes + outputYBytes / 2);
+        if (destinationBuffer is not null && (destinationBuffer.Length != length || ReferenceEquals(destinationBuffer, nv12)))
+            throw new ArgumentException("NV12 resize requires a separate destinationBuffer of the exact output length.", nameof(destinationBuffer));
+        var output = destinationBuffer ?? new byte[length];
         Array.Fill(output, (byte)16, 0, outputYBytes);
         Array.Fill(output, (byte)128, outputYBytes, outputYBytes / 2);
         double scale = Math.Min((double)outputWidth / width, (double)outputHeight / height);

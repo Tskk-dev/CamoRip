@@ -15,17 +15,19 @@ namespace UniversalCam.Views;
 public partial class MainWindow : Window
 {
     private readonly ConnectionManager _connection = new();
-    private readonly H264Decoder _decoder = new();
+    private readonly H264Decoder _decoder = new(reuseFrameBuffers: true);
     private readonly CompressedVideoQueue _frames = new();
     // Only independent decoded frames may be coalesced. Slow consumers get the
     // newest image without blocking H.264 input or accumulating video latency.
-    private readonly Channel<(DecodedFrame Frame, long Generation)> _cameraFramesQueue;
+    private readonly LatestFrameMailbox<(DecodedFrame Frame, long Generation)> _cameraFramesQueue;
     private readonly Channel<(DecodedFrame Frame, long Generation)> _previewFramesQueue;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly StageTiming _decodeTiming = new(), _cameraTiming = new(), _previewTiming = new();
     private VirtualCameraSession? _camera;
     private Task? _decodeTask, _cameraTask, _previewTask, _metricsTask;
     private WriteableBitmap? _bitmap;
+    // _previewPending keeps conversion and the UI copy from accessing this simultaneously.
+    private readonly byte[] _previewPixels = new byte[640 * 360 * 4];
     private bool _streaming;
     private volatile bool _closing;
     private bool _closed;
@@ -37,13 +39,15 @@ public partial class MainWindow : Window
     private long _lastMetricsTicks, _lastReceivedFrames, _lastDecodedFrames, _lastCameraFrames, _lastPreviewFrames;
     private long _lastQueueDrops, _lastRecoveries, _lastCameraCoalesced, _lastPreviewCoalesced, _lastPublishFailures;
     private TimeSpan _lastCpuTime;
+    private long _lastAllocatedBytes;
+    private readonly int[] _lastCollections = new int[3];
 
     public MainWindow()
     {
         InitializeComponent();
         Loaded += OnLoaded;
         Closing += OnClosing;
-        _cameraFramesQueue = LatestFrames(() => Interlocked.Increment(ref _cameraCoalesced));
+        _cameraFramesQueue = new(queued => { queued.Frame.Release(); Interlocked.Increment(ref _cameraCoalesced); });
         _previewFramesQueue = LatestFrames(() => Interlocked.Increment(ref _previewCoalesced));
     }
 
@@ -82,8 +86,9 @@ public partial class MainWindow : Window
             Interlocked.Exchange(ref _lastDecodedTicks, Stopwatch.GetTimestamp());
             Volatile.Write(ref _decodedWidth, frame.Width);
             Volatile.Write(ref _decodedHeight, frame.Height);
-            _cameraFramesQueue.Writer.TryWrite((frame, generation));
-            _previewFramesQueue.Writer.TryWrite((frame, generation));
+            _cameraFramesQueue.Publish((frame.Retain(), generation));
+            var preview = (frame.Retain(), generation);
+            if (!_previewFramesQueue.Writer.TryWrite(preview)) preview.Item1.Release();
         };
         _connection.Diagnostic += (_, message) => Ui(() => Diagnostic.Text = message);
         _connection.Diagnostic += (_, message) => App.Log("INFO", $"Connection: {message}");
@@ -111,10 +116,11 @@ public partial class MainWindow : Window
         // A dedicated MTA thread keeps decode independent of thread-pool/UI load.
         _decodeTask = Task.Factory.StartNew(DecodeFrames, CancellationToken.None,
             TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        _cameraTask = Task.Run(PublishCameraFrames);
+        _cameraTask = Task.Factory.StartNew(PublishCameraFrames, CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
         _previewTask = Task.Run(PreviewFrames);
         _metricsTask = Task.Run(CollectMetrics);
-        App.Log("INFO", "Pipeline v3: D3D11 hardware preferred; dedicated decoder; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
+        App.Log("INFO", "Pipeline v4: pooled NV12 buffers; MMCSS dedicated decoder/publisher; D3D11 hardware preferred; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
         try { await _connection.StartAsync(); }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
     }
@@ -147,20 +153,20 @@ public partial class MainWindow : Window
 
     private static Channel<(DecodedFrame Frame, long Generation)> LatestFrames(Action dropped) =>
         Channel.CreateBounded<(DecodedFrame, long)>(new BoundedChannelOptions(1)
-        { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest }, _ => dropped());
+        { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest }, queued => { queued.Item1.Release(); dropped(); });
 
     private bool IsCurrent(long generation) => !_closing && _connection.IsStreaming && generation == _frames.Generation;
 
     private void DecodeFrames()
     {
         long generation = -1;
-        var reader = _frames.ReadAllAsync().GetAsyncEnumerator();
+        using var scheduling = new VideoThreadScheduling();
+        App.Log("INFO", $"Decoder scheduling: {scheduling.Status}");
         try
         {
-            while (reader.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+            foreach (var queued in _frames.ReadAll())
             {
                 if (_closing) break;
-                var queued = reader.Current;
                 if (!IsCurrent(queued.Generation)) continue;
                 if (generation != queued.Generation)
                 {
@@ -184,16 +190,17 @@ public partial class MainWindow : Window
             }
         }
         catch (Exception ex) { App.Log(ex); }
-        finally { reader.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 
-    private async Task PublishCameraFrames()
+    private void PublishCameraFrames()
     {
+        using var scheduling = new VideoThreadScheduling();
+        App.Log("INFO", $"Camera publisher scheduling: {scheduling.Status}");
         try
         {
-            await foreach (var queued in _cameraFramesQueue.Reader.ReadAllAsync())
+            foreach (var queued in _cameraFramesQueue.ReadAll())
             {
-                if (!IsCurrent(queued.Generation)) continue;
+                if (!IsCurrent(queued.Generation)) { queued.Frame.Release(); continue; }
                 var started = Stopwatch.GetTimestamp();
                 try
                 {
@@ -205,7 +212,7 @@ public partial class MainWindow : Window
                     else Interlocked.Increment(ref _publishFailures);
                 }
                 catch (Exception ex) { Interlocked.Increment(ref _publishFailures); App.Log(ex); }
-                finally { _cameraTiming.Record(started); }
+                finally { _cameraTiming.Record(started); queued.Frame.Release(); }
             }
         }
         catch (Exception ex) { App.Log(ex); }
@@ -221,7 +228,8 @@ public partial class MainWindow : Window
                 // frame, rather than one that has aged during this preview interval.
                 await Task.Delay(66, _shutdown.Token);
                 if (!_previewFramesQueue.Reader.TryRead(out var queued)) continue;
-                if (IsCurrent(queued.Generation)) RenderPreview(queued.Frame, queued.Generation);
+                try { if (IsCurrent(queued.Generation)) RenderPreview(queued.Frame, queued.Generation); }
+                finally { queued.Frame.Release(); }
             }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
@@ -234,6 +242,8 @@ public partial class MainWindow : Window
         using var process = Process.GetCurrentProcess();
         _lastMetricsTicks = Stopwatch.GetTimestamp();
         _lastCpuTime = process.TotalProcessorTime;
+        _lastAllocatedBytes = GC.GetTotalAllocatedBytes();
+        for (var index = 0; index < 3; index++) _lastCollections[index] = GC.CollectionCount(index);
         try
         {
             while (await timer.WaitForNextTickAsync(_shutdown.Token)) WriteMetrics(process);
@@ -271,10 +281,20 @@ public partial class MainWindow : Window
         var cpuTime = process.TotalProcessorTime;
         var cpu = (cpuTime - _lastCpuTime).TotalSeconds / seconds / Environment.ProcessorCount * 100;
         _lastCpuTime = cpuTime;
+        var allocated = GC.GetTotalAllocatedBytes();
+        var allocationRate = (allocated - _lastAllocatedBytes) / seconds / 1048576;
+        _lastAllocatedBytes = allocated;
+        var collections = new int[3];
+        for (var index = 0; index < 3; index++)
+        {
+            var current = GC.CollectionCount(index);
+            collections[index] = current - _lastCollections[index];
+            _lastCollections[index] = current;
+        }
         if (!_connection.IsStreaming) return;
         var message = $"Pipeline fps: USB {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · preview {previewFps:F1} · queue drops {drops}";
         Ui(() => PerformanceStatus.Text = message);
-        App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB");
+        App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB; allocation={allocationRate:F1}MiB/s GC0/1/2={string.Join("/", collections)}");
     }
 
     private static string FrameAge(long ticks, long now) => ticks == 0 ? "none" : $"{Math.Max(0, Stopwatch.GetElapsedTime(ticks, now).TotalMilliseconds):F0}";
@@ -298,7 +318,7 @@ public partial class MainWindow : Window
         const int previewWidth = 640, previewHeight = 360;
         var started = Stopwatch.GetTimestamp();
         byte[] preview;
-        try { preview = NV12Converter.CreateBgraPreview(frame.Data, frame.Width, frame.Height, previewWidth, previewHeight); }
+        try { preview = NV12Converter.CreateBgraPreview(frame.Data, frame.Width, frame.Height, previewWidth, previewHeight, _previewPixels); }
         catch (Exception ex)
         {
             Interlocked.Exchange(ref _previewPending, 0);
@@ -363,9 +383,10 @@ public partial class MainWindow : Window
         try { await _connection.DisposeAsync(); }
         catch (Exception ex) { App.Log(ex); }
         if (_decodeTask is not null) await _decodeTask;
-        _cameraFramesQueue.Writer.TryComplete();
+        _cameraFramesQueue.Complete();
         _previewFramesQueue.Writer.TryComplete();
         await Task.WhenAll(new[] { _cameraTask, _previewTask, _metricsTask }.OfType<Task>());
+        while (_previewFramesQueue.Reader.TryRead(out var pending)) pending.Frame.Release();
         _decoder.Dispose();
         _shutdown.Dispose();
         _camera?.Dispose();
