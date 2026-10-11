@@ -13,6 +13,7 @@
 #include <cstring>
 #include <memory>
 #include <vector>
+#include "H264Geometry.h"
 
 using Microsoft::WRL::ComPtr;
 #define RETURN_IF_FAILED(expression) do { const HRESULT status_ = (expression); if (FAILED(status_)) return status_; } while (0)
@@ -33,6 +34,7 @@ struct Decoder {
     std::vector<uint8_t> nv12;
     UINT32 width = 0, height = 0;
     UINT32 displayWidth = 0, displayHeight = 0, cropLeft = 0, cropTop = 0;
+    H264::Geometry spsGeometry;
     LONG stride = 0;
     bool mfStarted = false;
     bool discontinuity = true;
@@ -118,6 +120,13 @@ struct Decoder {
                     static_cast<uint64_t>(cropTop) + displayHeight > height)
                     return MF_E_INVALIDMEDIATYPE;
             } else if (aperture != MF_E_ATTRIBUTENOTFOUND) return aperture;
+            // The software MFT can omit aperture metadata even when the SPS
+            // specifies cropping. Match the SPS to this storage surface before
+            // using its crop; never apply geometry from a different resolution.
+            if (spsGeometry.codedWidth == width && spsGeometry.codedHeight == height) {
+                displayWidth = spsGeometry.width; displayHeight = spsGeometry.height;
+                cropLeft = spsGeometry.left; cropTop = spsGeometry.top;
+            }
             return S_OK;
         }
     }
@@ -125,6 +134,8 @@ struct Decoder {
     HRESULT Submit(const uint8_t* bytes, int length, int64_t timestamp, bool keyframe) {
         if (!bytes || length <= 0 || length > 16 * 1024 * 1024 || timestamp > INT64_MAX / 10 || timestamp < 0)
             return E_INVALIDARG;
+        H264::Geometry geometry;
+        const bool hasGeometry = keyframe && H264::FindGeometry(bytes, static_cast<size_t>(length), geometry);
         ComPtr<IMFMediaBuffer> buffer;
         RETURN_IF_FAILED(MFCreateMemoryBuffer(static_cast<DWORD>(length), &buffer));
         BYTE* destination = nullptr;
@@ -146,6 +157,13 @@ struct Decoder {
         if (discontinuity) sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
         const HRESULT submitted = transform->ProcessInput(0, sample.Get(), 0);
         if (SUCCEEDED(submitted)) {
+            if (hasGeometry) {
+                spsGeometry = geometry;
+                if (spsGeometry.codedWidth == width && spsGeometry.codedHeight == height) {
+                    displayWidth = spsGeometry.width; displayHeight = spsGeometry.height;
+                    cropLeft = spsGeometry.left; cropTop = spsGeometry.top;
+                }
+            }
             discontinuity = false;
             previousSampleTime = sampleTime;
         }

@@ -49,14 +49,16 @@ public class H264DecoderTests
     }
 
     [Theory]
-    [InlineData(1920, 1080)]
-    [InlineData(50, 50)]
-    public void Feed_CroppedSps_ReturnsDisplaySizeAndPackedNv12WithoutMacroblockPadding(int width, int height)
+    [InlineData(1920, 1080, 66)]
+    [InlineData(50, 50, 66)]
+    [InlineData(1920, 1080, 77)]
+    [InlineData(1920, 1080, 100)]
+    public void Feed_CroppedSps_ReturnsDisplaySizeAndPackedNv12WithoutMacroblockPadding(int width, int height, uint profile)
     {
         using var decoder = new H264Decoder();
         var frames = new List<DecodedFrame>();
         decoder.FrameDecoded += (_, frame) => frames.Add(frame);
-        var bitstream = BlackIdrFixture.Create(width, height);
+        var bitstream = BlackIdrFixture.Create(width, height, profile);
         for (var index = 0; index < 3; index++) decoder.Feed(Video(bitstream, timestamp: 1_000_000 + index * 16_667));
         Assert.NotEmpty(frames);
         Assert.All(frames, frame =>
@@ -96,13 +98,19 @@ public class H264DecoderTests
 /// </summary>
 internal static class BlackIdrFixture
 {
-    public static byte[] Create(int width = 64, int height = 64)
+    public static byte[] Create(int width = 64, int height = 64, uint profile = 66)
     {
         int columns = (width + 15) / 16, rows = (height + 15) / 16;
         int cropRight = (columns * 16 - width) / 2, cropBottom = (rows * 16 - height) / 2;
         var sps = new Bits();
-        sps.Fixed(66, 8); sps.Fixed(0xC0, 8); sps.Fixed(width > 64 ? 42u : 30u, 8);
-        sps.Ue(0); sps.Ue(0); sps.Ue(2); // SPS0, frame_num4bits, POC type2
+        sps.Fixed(profile, 8); sps.Fixed(0xC0, 8); sps.Fixed(width > 64 ? 42u : 30u, 8);
+        sps.Ue(0); // SPS0
+        if (profile == 100)
+        {
+            sps.Ue(1); sps.Ue(0); sps.Ue(0); // 4:2:0, 8-bit luma/chroma
+            sps.Fixed(0, 1); sps.Fixed(0, 1); // no transform bypass or scaling lists
+        }
+        sps.Ue(0); sps.Ue(2); // frame_num4bits, POC type2
         sps.Ue(1); sps.Fixed(0, 1); // one reference, no gaps
         sps.Ue((uint)(columns - 1)); sps.Ue((uint)(rows - 1));
         sps.Fixed(1, 1); sps.Fixed(1, 1); sps.Fixed(0, 1); // progressive, direct8x8
