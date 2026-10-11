@@ -7,6 +7,7 @@ namespace UniversalCam.Tests;
 /// Integration tests for the Windows H.264 decoder. Missing native binaries or a
 /// missing OS codec fail these tests; a null decoded frame never counts as success.
 /// </summary>
+[Collection("Decoder integration")]
 public class H264DecoderTests
 {
     [Fact]
