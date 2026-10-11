@@ -180,7 +180,6 @@ public partial class MainWindow : Window
             var start = !_streaming;
             if (start) await _connection.StartStreamAsync();
             else await _connection.StopStreamAsync();
-            SetStreaming(start);
         }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
     }
@@ -211,6 +210,6 @@ public partial class MainWindow : Window
     private void Ui(Action action)
     {
         if (Dispatcher.HasShutdownStarted) return;
-        Dispatcher.BeginInvoke(() => { if (!_closed) action(); });
+        Dispatcher.InvokeAsync(() => { if (!_closed) action(); });
     }
 }

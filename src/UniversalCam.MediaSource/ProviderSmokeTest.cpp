@@ -27,9 +27,16 @@ HRESULT Verify(HMODULE module) {
     ComPtr<IMFActivate> activation;
     CHECK_HR(factory->CreateInstance(nullptr, IID_PPV_ARGS(&activation)));
     CHECK_HR(activation->SetString(UCAM_FRAME_PATH, path.c_str()));
+    ComPtr<IMFMediaSource> closedSource;
+    CHECK_HR(activation->ActivateObject(IID_PPV_ARGS(&closedSource)));
+    CHECK_HR(activation->ShutdownObject());
+    if (closedSource->Stop() != MF_E_SHUTDOWN) return E_UNEXPECTED;
+    closedSource.Reset();
     ComPtr<IMFMediaSource> source;
     CHECK_HR(activation->ActivateObject(IID_PPV_ARGS(&source)));
-    struct SourceGuard { IMFActivate* activation; ~SourceGuard() { activation->ShutdownObject(); } } sourceGuard{activation.Get()};
+    // Releasing the helper must not invalidate the returned source's lifetime.
+    activation.Reset();
+    struct SourceGuard { IMFMediaSource* source; ~SourceGuard() { source->Shutdown(); } } sourceGuard{source.Get()};
     ComPtr<IMFPresentationDescriptor> presentation;
     CHECK_HR(source->CreatePresentationDescriptor(&presentation));
     DWORD count = 0; CHECK_HR(presentation->GetStreamDescriptorCount(&count));

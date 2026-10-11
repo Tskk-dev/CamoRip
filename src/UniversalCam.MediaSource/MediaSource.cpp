@@ -412,7 +412,6 @@ public:
         if (source_) { source_->Shutdown(); source_.Reset(); } return S_OK;
     }
     STDMETHODIMP DetachObject() override { std::lock_guard<std::mutex> lock(mutex_); source_.Reset(); return S_OK; }
-    ~Activation() { ShutdownObject(); }
     STDMETHODIMP GetItem(REFGUID key, PROPVARIANT* value) override { return attributes_->GetItem(key, value); }
     STDMETHODIMP GetItemType(REFGUID key, MF_ATTRIBUTE_TYPE* value) override { return attributes_->GetItemType(key, value); }
     STDMETHODIMP CompareItem(REFGUID key, REFPROPVARIANT value, BOOL* match) override { return attributes_->CompareItem(key, value, match); }

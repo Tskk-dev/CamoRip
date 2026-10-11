@@ -54,8 +54,10 @@ struct Decoder {
         ComPtr<ICodecAPI> codec;
         if (SUCCEEDED(transform.As(&codec))) {
             VARIANT value; VariantInit(&value);
-            value.vt = VT_BOOL; value.boolVal = VARIANT_TRUE;
-            codec->SetValue(&CODECAPI_AVLowLatencyMode, &value);
+            // Microsoft's H.264 decoder specifically requires VT_UI4 here.
+            // https://learn.microsoft.com/windows/win32/medfound/codecapi-avlowlatencymode
+            value.vt = VT_UI4; value.ulVal = 1;
+            RETURN_IF_FAILED(codec->SetValue(&CODECAPI_AVLowLatencyMode, &value));
             value.vt = VT_UI4; value.ulVal = 4096;
             codec->SetValue(&CODECAPI_AVDecVideoMaxCodedWidth, &value);
             value.ulVal = 2304;

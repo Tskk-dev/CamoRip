@@ -69,7 +69,7 @@ jobs:
           APP=artifacts/ios/Build/Products/Release-iphoneos/UniversalCam.app
           test -d "$APP"
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '15.0'
-          xcrun lipo -verify_arch arm64 "$APP/UniversalCam"
+          xcrun lipo "$APP/UniversalCam" -verify_arch arm64
           mkdir -p artifacts/ipa/Payload
           cp -R "$APP" artifacts/ipa/Payload/
           (cd artifacts/ipa && zip -qr ../USB-iPhone-Camera-ios15-unsigned.ipa Payload)

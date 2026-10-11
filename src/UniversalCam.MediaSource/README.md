@@ -23,7 +23,8 @@ ctest --test-dir artifacts/native -C Release --output-on-failure
 ```
 
 `ProviderSmokeTest.exe` loads the DLL directly without registering a camera or
-writing COM registry entries. It verifies source activation, one NV12 1080p30
+writing COM registry entries. It verifies source activation and helper release,
+explicit activation shutdown and reactivation, one NV12 1080p30
 stream, real pixels through the frame channel, four sample request tokens,
 monotonic sample timestamps, stop/restart and shutdown. Windows runners need
 desktop Media Foundation components. It does not prove FrameServer activation,
