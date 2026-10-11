@@ -34,6 +34,21 @@ phone capture/encoder loss, `encoded` versus `usbSent` identifies USB send
 backpressure, and Windows `USB` versus `decoded` versus `virtual camera` narrows
 down the PC-side stage. Include both logs when reporting a stall.
 
+Windows also logs `stage avg/max(count)` in milliseconds for decoder Feed,
+camera-channel writes, and preview conversion. At 60 fps, a stage consistently
+taking more than 16.7 ms cannot keep up. Camera and preview have independent
+workers with one latest decoded frame each; coalesced preview frames are expected
+because the preview runs at about 15 fps. `virtual camera` counts successful
+channel writes, not frames consumed by a meeting app.
+
+The compressed queue is limited to 32 frames, 16 MiB and 250 ms of queued age.
+An overflow discards the broken H.264 dependency chain once and waits for a fresh
+keyframe; `recoveries`, `waitingIDR`, queue age, last-frame ages and CPU/memory
+help identify the cause. Metrics run independently of the UI. Restarting the
+companion preserves the preceding run as `previous.log`; unhandled managed
+exceptions and normal shutdowns are logged too. PC pipeline changes do not
+require reinstalling the phone app.
+
 ## Build
 
 Windows needs Visual Studio 2022 C++ tools, a Windows 11 SDK, CMake, .NET SDK 8 or newer, and Inno Setup 6 for installer packaging. From a Developer PowerShell:
