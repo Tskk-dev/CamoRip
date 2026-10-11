@@ -55,10 +55,12 @@ public sealed partial class MainWindow : Window
                 throw;
             }
         };
+        _service.Connection.Failure += (_, message) => App.Ui(() => { ConnectionNotice.Message = message; ConnectionNotice.IsOpen = true; });
         _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
             _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
+            if (state == TransportState.Connected) ConnectionNotice.IsOpen = false;
             ControlStatus.Text = state == TransportState.Connected && !_service.Connection.SupportsCameraSettings
                 ? "Update the iPhone app to use camera controls." : "Waiting for phone camera capabilities";
         });
@@ -72,6 +74,7 @@ public sealed partial class MainWindow : Window
             if (App.Settings.CloseToTray) HideToTray(); else App.Run(_app.ExitAsync);
         };
         AppWindow.Changed += (_, _) => UpdatePreviewVisibility();
+        Activated += (_, _) => UpdatePreviewVisibility();
         Root.SizeChanged += (_, _) =>
         {
             if (_fullscreen) return;
@@ -92,6 +95,7 @@ public sealed partial class MainWindow : Window
             if (Root.FindName(key) is TextBlock text) text.Text = value;
         StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected;
         StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
+        if (_service.Streaming) ConnectionNotice.IsOpen = false;
         if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }
         UpdateEnabled();
         UpdatePreviewVisibility();
@@ -238,8 +242,13 @@ public sealed partial class MainWindow : Window
     {
         _fullscreen = !_fullscreen;
         AppWindow.SetPresenter(_fullscreen ? AppWindowPresenterKind.FullScreen : AppWindowPresenterKind.Overlapped);
-        Navigation.IsPaneOpen = !_fullscreen;
+        Navigation.IsPaneOpen = !_fullscreen && Root.ActualWidth >= 1000;
+        TopBar.Visibility = PerformanceStatus.Visibility = ConnectionDetails.Visibility = _fullscreen ? Visibility.Collapsed : Visibility.Visible;
+        PreviewLayout.Padding = new Thickness(_fullscreen ? 0 : 24);
+        PreviewLayout.RowSpacing = _fullscreen ? 0 : 16;
+        PreviewBorder.CornerRadius = new CornerRadius(_fullscreen ? 0 : 12);
         FullscreenExit.Visibility = _fullscreen ? Visibility.Visible : Visibility.Collapsed;
+        if (_fullscreen) FullscreenExit.Focus(FocusState.Programmatic);
     }
     private void OnSettings(object sender, RoutedEventArgs e)
     {

@@ -6,6 +6,7 @@ namespace UniversalCam.Core;
 /// <summary>USB-only handshake and video streaming state for the Windows companion.</summary>
 public sealed class ConnectionManager : IAsyncDisposable
 {
+    public event EventHandler<string>? Failure;
     public event EventHandler<CameraState>? CameraStateReceived;
     public bool SupportsCameraSettings { get; private set; }
     public event EventHandler<MediaFrame>? FrameReceived;
@@ -124,6 +125,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             SetStreaming(false);
         }
         SetState(state);
+        if (state == TransportState.Error) Failure?.Invoke(this, StatusMessage);
     }
 
     private async Task SendHandshakeAsync(int generation, int transportGeneration)
@@ -189,6 +191,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                 Report("Streaming stopped. The USB connection is ready.");
                 break;
             case ErrorMessage error:
+                Failure?.Invoke(this, error.Message);
                 _startAfterConfigure = false;
                 SetStreaming(false);
                 Report(string.IsNullOrWhiteSpace(error.Code) ? error.Message : $"{error.Code}: {error.Message}");
