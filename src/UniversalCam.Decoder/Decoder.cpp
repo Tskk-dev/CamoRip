@@ -27,11 +27,12 @@ struct ComScope {
 struct Decoder {
     ComPtr<IMFTransform> transform;
     ComPtr<IMFMediaType> outputType;
-    std::vector<uint8_t> bgra;
+    // Keep the decoder output in NV12 all the way to the virtual camera. The
+    // previous NV12 -> BGRA -> NV12 round trip was a pair of scalar 1080p
+    // conversions on every frame and could reduce real-time capture to ~1 fps.
+    std::vector<uint8_t> nv12;
     UINT32 width = 0, height = 0;
     LONG stride = 0;
-    UINT32 matrix = MFVideoTransferMatrix_BT709;
-    UINT32 range = MFNominalRange_16_235;
     bool mfStarted = false;
     bool discontinuity = true;
     LONGLONG previousSampleTime = -1;
@@ -92,9 +93,6 @@ struct Decoder {
             UINT32 rawStride = 0;
             if (SUCCEEDED(candidate->GetUINT32(MF_MT_DEFAULT_STRIDE, &rawStride))) stride = static_cast<LONG>(rawStride);
             else stride = static_cast<LONG>(width);
-            matrix = MFGetAttributeUINT32(candidate.Get(), MF_MT_YUV_MATRIX,
-                width >= 1280 ? MFVideoTransferMatrix_BT709 : MFVideoTransferMatrix_BT601);
-            range = MFGetAttributeUINT32(candidate.Get(), MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
             return S_OK;
         }
     }
@@ -129,8 +127,6 @@ struct Decoder {
         return submitted;
     }
 
-    static uint8_t Clamp(int value) { return static_cast<uint8_t>(std::clamp(value, 0, 255)); }
-
     HRESULT Convert(IMFSample* sample, int64_t* timestamp) {
         if (!width || !height || width > 4096 || height > 2304 || (width & 1) || (height & 1) || stride < static_cast<LONG>(width))
             return MF_E_INVALIDMEDIATYPE;
@@ -143,28 +139,19 @@ struct Decoder {
         const size_t ySize = static_cast<size_t>(stride) * height;
         const size_t required = ySize + static_cast<size_t>(stride) * (height / 2);
         if (currentLength < required) { buffer->Unlock(); return MF_E_BUFFERTOOSMALL; }
-        try { bgra.resize(static_cast<size_t>(width) * height * 4); }
+        const size_t yBytes = static_cast<size_t>(width) * height;
+        const size_t frameBytes = yBytes + yBytes / 2;
+        try { nv12.resize(frameBytes); }
         catch (...) { buffer->Unlock(); return E_OUTOFMEMORY; }
-        const bool bt709 = matrix == MFVideoTransferMatrix_BT709;
-        const bool fullRange = range == MFNominalRange_0_255;
         for (UINT32 row = 0; row < height; ++row) {
-            const auto yRow = pixels + static_cast<size_t>(row) * stride;
-            const auto uvRow = pixels + ySize + static_cast<size_t>(row / 2) * stride;
-            auto output = bgra.data() + static_cast<size_t>(row) * width * 4;
-            for (UINT32 column = 0; column < width; ++column) {
-                const int u = uvRow[column & ~1u] - 128;
-                const int v = uvRow[(column & ~1u) + 1] - 128;
-                const int y = fullRange ? 256 * yRow[column] + 128 : 298 * (yRow[column] - 16) + 128;
-                const int red = y + (fullRange ? (bt709 ? 403 : 359) : (bt709 ? 459 : 409)) * v;
-                const int green = y - (fullRange ? (bt709 ? 48 : 88) : (bt709 ? 55 : 100)) * u
-                    - (fullRange ? (bt709 ? 120 : 183) : (bt709 ? 136 : 208)) * v;
-                const int blue = y + (fullRange ? (bt709 ? 475 : 454) : (bt709 ? 541 : 516)) * u;
-                output[column * 4] = Clamp(blue >> 8);
-                output[column * 4 + 1] = Clamp(green >> 8);
-                output[column * 4 + 2] = Clamp(red >> 8);
-                output[column * 4 + 3] = 255;
-            }
+            memcpy(nv12.data() + static_cast<size_t>(row) * width,
+                pixels + static_cast<size_t>(row) * stride, width);
         }
+        const BYTE* inputUv = pixels + ySize;
+        BYTE* outputUv = nv12.data() + yBytes;
+        for (UINT32 row = 0; row < height / 2; ++row)
+            memcpy(outputUv + static_cast<size_t>(row) * width,
+                inputUv + static_cast<size_t>(row) * stride, width);
         buffer->Unlock();
         LONGLONG sampleTime = 0;
         RETURN_IF_FAILED(sample->GetSampleTime(&sampleTime));
@@ -199,8 +186,8 @@ struct Decoder {
             RETURN_IF_FAILED(Convert(output.pSample, timestamp));
             *outputWidth = static_cast<int>(width);
             *outputHeight = static_cast<int>(height);
-            *pixels = bgra.data();
-            *length = static_cast<int>(bgra.size());
+            *pixels = nv12.data();
+            *length = static_cast<int>(nv12.size());
             return S_OK;
         }
         return MF_E_INVALIDMEDIATYPE;
@@ -254,3 +241,4 @@ extern "C" __declspec(dllexport) void __cdecl UCamDecoderDestroy(void* handle) n
     ComScope apartment;
     delete static_cast<Decoder*>(handle);
 }
+

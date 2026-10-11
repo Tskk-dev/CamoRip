@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Media;
@@ -27,6 +28,7 @@ public partial class MainWindow : Window
     private bool _closed;
     private bool _awaitKeyframe = true;
     private int _previewPending;
+    private long _lastPreviewTicks;
     private long _generation;
     private long _decodingGeneration;
 
@@ -145,15 +147,32 @@ public partial class MainWindow : Window
     private void RenderPreview(DecodedFrame frame)
     {
         if (_closing || Interlocked.Exchange(ref _previewPending, 1) != 0) return;
+        const int previewWidth = 640, previewHeight = 360;
+        var now = Stopwatch.GetTimestamp();
+        var last = Interlocked.Read(ref _lastPreviewTicks);
+        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < TimeSpan.FromMilliseconds(66))
+        {
+            Interlocked.Exchange(ref _previewPending, 0);
+            return;
+        }
+        Interlocked.Exchange(ref _lastPreviewTicks, now);
+        byte[] preview;
+        try { preview = NV12Converter.CreateBgraPreview(frame.Data, frame.Width, frame.Height, previewWidth, previewHeight); }
+        catch (Exception ex)
+        {
+            Interlocked.Exchange(ref _previewPending, 0);
+            App.Log(ex);
+            return;
+        }
         var generation = Interlocked.Read(ref _generation);
         Ui(() =>
         {
             try
             {
                 if (_closing || !_connection.IsStreaming || generation != Interlocked.Read(ref _generation)) return;
-                if (_bitmap is null || _bitmap.PixelWidth != frame.Width || _bitmap.PixelHeight != frame.Height)
-                    _bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgra32, null);
-                _bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Data, frame.Width * 4, 0);
+                if (_bitmap is null || _bitmap.PixelWidth != previewWidth || _bitmap.PixelHeight != previewHeight)
+                    _bitmap = new WriteableBitmap(previewWidth, previewHeight, 96, 96, PixelFormats.Bgra32, null);
+                _bitmap.WritePixels(new Int32Rect(0, 0, previewWidth, previewHeight), preview, previewWidth * 4, 0);
                 Preview.Source = _bitmap;
                 Waiting.Visibility = Visibility.Collapsed;
             }
@@ -213,3 +232,4 @@ public partial class MainWindow : Window
         Dispatcher.InvokeAsync(() => { if (!_closed) action(); });
     }
 }
+

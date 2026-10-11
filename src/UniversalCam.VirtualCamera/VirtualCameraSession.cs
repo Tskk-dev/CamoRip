@@ -83,7 +83,7 @@ public sealed class VirtualCameraSession : IDisposable
                     Width = SharedMemoryBridge.Width,
                     Height = SharedMemoryBridge.Height,
                     PtsUs = frame.PtsUs,
-                    Data = NV12Converter.ConvertBgra32ToNv12Scaled(frame.Data, frame.Width, frame.Height,
+                    Data = NV12Converter.FitNv12(frame.Data, frame.Width, frame.Height,
                         SharedMemoryBridge.Width, SharedMemoryBridge.Height)
                 });
             }
@@ -131,4 +131,5 @@ public sealed class VirtualCameraSession : IDisposable
         }
     }
 }
+
 

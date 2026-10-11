@@ -4,6 +4,45 @@ namespace UniversalCam.Tests;
 
 public class NV12ConverterTests
 {
+    [Fact]
+    public void FitNv12_1080p_ReturnsDecoderBufferWithoutCopying()
+    {
+        var source = new byte[1920 * 1080 * 3 / 2];
+        Assert.Same(source, NV12Converter.FitNv12(source, 1920, 1080, 1920, 1080));
+    }
+
+    [Fact]
+    public void FitNv12_ScalesLumaAndChromaPlanes()
+    {
+        byte[] source = [16, 32, 64, 96, 128, 129];
+        var output = NV12Converter.FitNv12(source, 2, 2, 4, 4);
+        Assert.Equal(new byte[]
+        {
+            16, 16, 32, 32,
+            16, 16, 32, 32,
+            64, 64, 96, 96,
+            64, 64, 96, 96,
+            128, 129, 128, 129,
+            128, 129, 128, 129
+        }, output);
+    }
+
+    [Theory]
+    [InlineData((byte)16, (byte)0)]
+    [InlineData((byte)235, (byte)255)]
+    public void CreateBgraPreview_ConvertsLimitedRangeNeutralNv12(byte luma, byte expected)
+    {
+        byte[] source = [luma, luma, luma, luma, 128, 128];
+        var preview = NV12Converter.CreateBgraPreview(source, 2, 2, 2, 2);
+        for (var index = 0; index < preview.Length; index += 4)
+        {
+            Assert.Equal(expected, preview[index]);
+            Assert.Equal(expected, preview[index + 1]);
+            Assert.Equal(expected, preview[index + 2]);
+            Assert.Equal((byte)255, preview[index + 3]);
+        }
+    }
+
     [Theory]
     [InlineData((byte)0, (byte)16)]
     [InlineData((byte)255, (byte)235)]
@@ -135,3 +174,4 @@ public class NV12ConverterTests
         }
     }
 }
+

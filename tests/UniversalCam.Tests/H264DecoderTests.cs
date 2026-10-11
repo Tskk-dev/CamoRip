@@ -13,7 +13,7 @@ public class H264DecoderTests
         new(new FrameHeader(FrameHeader.StreamTypeVideo, (uint)payload.Length, timestamp, keyframe ? (byte)1 : (byte)0), payload);
 
     [Fact]
-    public void Feed_ValidAnnexBIdr_Decodes64By64BlackBgraFrameWithTimestamp()
+    public void Feed_ValidAnnexBIdr_Decodes64By64BlackNv12FrameWithTimestamp()
     {
         using var decoder = new H264Decoder();
         var frames = new List<DecodedFrame>();
@@ -25,15 +25,10 @@ public class H264DecoderTests
         var first = frames[0];
         Assert.Equal(64, first.Width);
         Assert.Equal(64, first.Height);
-        Assert.Equal(64 * 64 * 4, first.Data.Length);
+        Assert.Equal(64 * 64 * 3 / 2, first.Data.Length);
         Assert.InRange(first.PtsUs, 1_000_000, 1_066_666);
-        for (var index = 0; index < first.Data.Length; index += 4)
-        {
-            Assert.InRange(first.Data[index], 0, 2);
-            Assert.InRange(first.Data[index + 1], 0, 2);
-            Assert.InRange(first.Data[index + 2], 0, 2);
-            Assert.Equal(255, first.Data[index + 3]);
-        }
+        Assert.All(first.Data.Take(64 * 64), value => Assert.InRange(value, (byte)15, (byte)17));
+        Assert.All(first.Data.Skip(64 * 64), value => Assert.InRange(value, (byte)127, (byte)129));
     }
 
     [Fact]
@@ -148,3 +143,4 @@ internal static class BlackIdrFixture
         }
     }
 }
+

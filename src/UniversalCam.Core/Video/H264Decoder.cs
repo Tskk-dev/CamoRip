@@ -5,7 +5,8 @@ using UniversalCam.Core.Transport;
 namespace UniversalCam.Core.Video;
 
 /// <summary>
-/// Windows Media Foundation H.264 decoder. Each Feed contains one Annex B access unit.
+/// Windows Media Foundation H.264 decoder. Each Feed contains one Annex B access unit;
+/// decoded frames are tightly packed NV12 so the camera path avoids a BGRA round trip.
 /// Serializes native calls and defers resets until Feed so camera switching and queue
 /// overflow cannot race native decode. Missing native binaries are real errors.
 /// </summary>
@@ -54,7 +55,8 @@ public sealed class H264Decoder : IDisposable
                 out var timestamp, out var pointer, out var length);
             if (result == 1) return; // S_FALSE = decoder needs more compressed input.
             Check(result, "read decoded H.264 frame");
-            if (width is < 1 or > 4096 || height is < 1 or > 2304 || length != checked(width * height * 4) || pointer == IntPtr.Zero)
+            if (width is < 1 or > 4096 || height is < 1 or > 2304 || (width & 1) != 0 || (height & 1) != 0 ||
+                length != checked(width * height * 3 / 2) || pointer == IntPtr.Zero)
                 throw new InvalidDataException("The H.264 decoder returned an invalid frame.");
             var data = new byte[length];
             Marshal.Copy(pointer, data, 0, length);
@@ -117,7 +119,9 @@ public sealed class DecodedFrame
     public int Width { get; }
     public int Height { get; }
     public long PtsUs { get; }
+    /// <summary>Tightly packed NV12: width*height luma bytes followed by width*height/2 chroma bytes.</summary>
     public byte[] Data { get; }
     public DecodedFrame(int width, int height, long ptsUs, byte[] data)
     { Width = width; Height = height; PtsUs = ptsUs; Data = data; }
 }
+
