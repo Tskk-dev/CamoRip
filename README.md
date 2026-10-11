@@ -52,8 +52,7 @@ require reinstalling the phone app.
 The decoder honors the Media Foundation display aperture: a padded 1920x1088
 H.264 surface is copied as its valid 1920x1080 image, including the correct UV
 plane offset. This keeps normal 1080p publishing on the NV12 passthrough path
-instead of running a full-frame scalar resize. A bounded SPS parser supplies
-the crop when Windows omits the aperture metadata.
+instead of running a full-frame scalar resize.
 
 ## Build
 
