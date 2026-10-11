@@ -2,7 +2,7 @@
 
 Use an iPhone 6s Plus as a Windows 11 webcam through a Lightning USB cable. The iPhone app captures camera video with AVFoundation and encodes H.264 with VideoToolbox. The Windows companion reads it through Apple's local USB device service, decodes it with Windows Media Foundation, and exposes **USB iPhone Camera** to camera apps using the Windows 11 virtual camera API.
 
-Video stays on the iPhone, USB cable, and Windows PC. The phone listens on loopback only; the Windows client selects USB-connected devices. No external video server or account is used by this app. The meeting application you choose controls what happens to its webcam input.
+I made this app because FUCK CAMO STUDIO AND EVERY SINGLE FUCKING APP THAT NEEDS PAYMENT FOR THIS SHIT LOL I WILL NOT PAY FOR YOUR SHIT. 
 
 ## Requirements
 
