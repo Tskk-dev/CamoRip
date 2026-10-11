@@ -113,7 +113,7 @@ internal static class BlackIdrFixture
         sps.Ue(0); sps.Ue(2); // frame_num4bits, POC type2
         sps.Ue(1); sps.Fixed(0, 1); // one reference, no gaps
         sps.Ue((uint)(columns - 1)); sps.Ue((uint)(rows - 1));
-        sps.Fixed(1, 1); sps.Fixed(1, 1); sps.Fixed(0, 1); // progressive, direct8x8
+        sps.Fixed(1, 1); sps.Fixed(1, 1); // progressive, direct8x8
         sps.Fixed(cropRight != 0 || cropBottom != 0 ? 1u : 0u, 1);
         if (cropRight != 0 || cropBottom != 0)
         {
