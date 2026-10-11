@@ -17,4 +17,3 @@ func makeAnnexB(_ avcc: UnsafeRawBufferPointer, parameterSets: Data) -> Data? {
     }
     return offset == avcc.count && offset > 0 ? output : nil
 }
-

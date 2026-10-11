@@ -52,9 +52,6 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
     dependencies: []
-    scheme:
-      testTargets: []
-      gatherCoverageData: false
 
   UniversalCamPhoneTests:
     type: bundle.unit-test
@@ -76,6 +73,7 @@ schemes:
     build:
       targets:
         UniversalCamPhone: all
+        UniversalCamPhoneTests: [test]
     run:
       config: Debug
     test:
