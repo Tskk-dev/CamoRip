@@ -25,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="Fixtures/*.h264" CopyToOutputDirectory="PreserveNewest" />
     <Using Include="Xunit" />
     <None Include="..\..\artifacts\decoder\$(Configuration)\UniversalCam.Decoder.dll"
           Link="UniversalCam.Decoder.dll" CopyToOutputDirectory="PreserveNewest"

@@ -27,17 +27,42 @@ public class H264DecoderTests
     }
 
     [Fact]
-    public void AutomaticMode_ReportsActualOutputBackendAfterDecoding()
+    public void AutomaticMode_MatchesSoftwareOutputAcrossCameraResolutionChange()
     {
-        using var decoder = new H264Decoder();
-        var frames = 0;
-        decoder.FrameDecoded += (_, _) => frames++;
-        var bitstream = BlackIdrFixture.Create(1920, 1080, 77);
-        for (var index = 0; index < 3; index++) decoder.Feed(Video(bitstream));
-        Assert.True(frames > 0);
-        Assert.True(decoder.BackendStatus.StartsWith("D3D11 hardware confirmed;") ||
-            decoder.BackendStatus.StartsWith("software"), decoder.BackendStatus);
-        Assert.DoesNotContain("awaiting decoded surface", decoder.BackendStatus);
+        using var automatic = new H264Decoder();
+        var actual = new List<DecodedFrame>();
+        automatic.FrameDecoded += (_, frame) => actual.Add(frame);
+        foreach (var (file, width, height) in new[] {
+            ("Hardware720p.h264", 1280, 720), ("Hardware1080p.h264", 1920, 1080) })
+        {
+            using var software = new H264Decoder(preferHardware: false);
+            var reference = new List<DecodedFrame>();
+            software.FrameDecoded += (_, frame) => reference.Add(frame);
+            var payload = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", file));
+            automatic.RequestReset();
+            actual.Clear();
+            for (var index = 0; index < 3; index++)
+            {
+                automatic.Feed(Video(payload, timestamp: 1_000_000 + index * 16_667));
+                software.Feed(Video(payload, timestamp: 1_000_000 + index * 16_667));
+            }
+            Assert.NotEmpty(actual);
+            Assert.NotEmpty(reference);
+            Assert.All(actual, frame => {
+                Assert.Equal(width, frame.Width);
+                Assert.Equal(height, frame.Height);
+                Assert.Equal(reference[0].Data.Length, frame.Data.Length);
+                int maximumError = 0;
+                for (int index = 0; index < frame.Data.Length; index++)
+                    maximumError = Math.Max(maximumError, Math.Abs(frame.Data[index] - reference[0].Data[index]));
+                Assert.InRange(maximumError, 0, 1);
+            });
+            Assert.True(automatic.BackendStatus.StartsWith("D3D11 hardware confirmed;") ||
+                automatic.BackendStatus.StartsWith("software"), automatic.BackendStatus);
+            Assert.DoesNotContain("awaiting decoded surface", automatic.BackendStatus);
+            if (Environment.GetEnvironmentVariable("UCAM_REQUIRE_HARDWARE_TESTS") == "1")
+                Assert.StartsWith("D3D11 hardware confirmed;", automatic.BackendStatus);
+        }
     }
 
     private static MediaFrame Video(byte[] payload, bool keyframe = true, long timestamp = 1_000_000) =>
@@ -46,7 +71,7 @@ public class H264DecoderTests
     [Fact]
     public void Feed_ValidAnnexBIdr_Decodes64By64BlackNv12FrameWithTimestamp()
     {
-        using var decoder = new H264Decoder();
+        using var decoder = new H264Decoder(preferHardware: false);
         var frames = new List<DecodedFrame>();
         decoder.FrameDecoded += (_, frame) => frames.Add(frame);
         var bitstream = BlackIdrFixture.Create();
@@ -65,7 +90,7 @@ public class H264DecoderTests
     [Fact]
     public void RequestReset_IgnoresInterFramesUntilNextKeyframe_ThenResumesDecode()
     {
-        using var decoder = new H264Decoder();
+        using var decoder = new H264Decoder(preferHardware: false);
         var count = 0;
         decoder.FrameDecoded += (_, _) => count++;
         var bitstream = BlackIdrFixture.Create();
@@ -86,7 +111,7 @@ public class H264DecoderTests
     [InlineData(1920, 1080, 100)]
     public void Feed_CroppedSps_ReturnsDisplaySizeAndPackedNv12WithoutMacroblockPadding(int width, int height, uint profile)
     {
-        using var decoder = new H264Decoder();
+        using var decoder = new H264Decoder(preferHardware: false);
         var frames = new List<DecodedFrame>();
         decoder.FrameDecoded += (_, frame) => frames.Add(frame);
         var bitstream = BlackIdrFixture.Create(width, height, profile);
@@ -105,7 +130,7 @@ public class H264DecoderTests
     [Fact]
     public void Feed_AudioOrEmptyVideo_DoesNotInitializeNativeDecoder()
     {
-        using var decoder = new H264Decoder();
+        using var decoder = new H264Decoder(preferHardware: false);
         decoder.Feed(new MediaFrame(new FrameHeader(FrameHeader.StreamTypeAudio, 4, 0, 2), [0, 0, 0, 0]));
         decoder.Feed(Video([]));
     }
@@ -113,7 +138,7 @@ public class H264DecoderTests
     [Fact]
     public void Dispose_IsIdempotent_AndFurtherFeedIsRejected()
     {
-        var decoder = new H264Decoder();
+        var decoder = new H264Decoder(preferHardware: false);
         decoder.Feed(Video(BlackIdrFixture.Create()));
         decoder.Dispose();
         decoder.Dispose();

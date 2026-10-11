@@ -11,6 +11,7 @@
 *.xlsx binary
 *.exe binary
 *.dll binary
+*.h264 binary
 *.pdb binary
 *.pfx binary
 
