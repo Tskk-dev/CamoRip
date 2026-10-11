@@ -21,8 +21,8 @@ struct CaptureConfiguration: Equatable {
 }
 
 /// All capture configuration and frame callbacks run on sessionQueue. UI updates
-/// and completions are delivered on main. A 6s Plus uses its rear camera for
-/// 1080p30; its front camera negotiates the resolution it actually supports.
+/// and completions are delivered on main. A 6s Plus rear camera can capture
+/// 1080p60; a front camera negotiates the best format and rate it supports.
 final class CameraSession: NSObject, ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var currentCameraID = ""
@@ -37,7 +37,7 @@ final class CameraSession: NSObject, ObservableObject {
     private var configured = false
     private var requestedWidth: Int32 = 1920
     private var requestedHeight: Int32 = 1080
-    private var requestedFPS: Int32 = 30
+    private var requestedFPS: Int32 = 60
 
     override init() {
         super.init()
@@ -162,28 +162,41 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     private func applyFormat(to device: AVCaptureDevice) throws -> CaptureConfiguration {
-        let candidates = device.formats.filter { format in
+        let formats = device.formats.filter { format in
             let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             return d.width <= requestedWidth && d.height <= requestedHeight && d.width >= 640
                 && abs(Double(d.width) / Double(d.height) - 16.0 / 9.0) < 0.03
-                && format.videoSupportedFrameRateRanges.contains {
-                    $0.minFrameRate <= Double(requestedFPS) && $0.maxFrameRate >= Double(requestedFPS)
-                }
         }
-        guard let format = candidates.max(by: { lhs, rhs in
-            let a = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
-            let b = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
-            return a.width * a.height < b.width * b.height
-        }) else { throw failure("This camera does not support a 16:9 format at \(requestedFPS) fps.") }
+        let supportsRequestedRate = formats.filter { format in
+            format.videoSupportedFrameRateRanges.contains {
+                $0.minFrameRate <= Double(requestedFPS) && $0.maxFrameRate >= Double(requestedFPS)
+            }
+        }
+        let candidates = (supportsRequestedRate.isEmpty ? formats : supportsRequestedRate).compactMap { format -> (AVCaptureDevice.Format, Int32)? in
+            let fps: Int32
+            if !supportsRequestedRate.isEmpty {
+                fps = requestedFPS
+            } else {
+                guard let range = format.videoSupportedFrameRateRanges.max(by: { $0.maxFrameRate < $1.maxFrameRate }) else { return nil }
+                fps = min(requestedFPS, Int32(range.maxFrameRate.rounded(.down)))
+                guard fps > 0, range.minFrameRate <= Double(fps) else { return nil }
+            }
+            return (format, fps)
+        }
+        guard let (format, actualFPS) = candidates.max(by: { lhs, rhs in
+            let a = CMVideoFormatDescriptionGetDimensions(lhs.0.formatDescription)
+            let b = CMVideoFormatDescriptionGetDimensions(rhs.0.formatDescription)
+            return a.width * a.height == b.width * b.height ? lhs.1 < rhs.1 : a.width * a.height < b.width * b.height
+        }) else { throw failure("This camera does not support a 16:9 format at up to \(requestedFPS) fps.") }
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
         if captureSession.canSetSessionPreset(.inputPriority) { captureSession.sessionPreset = .inputPriority }
         device.activeFormat = format
-        let duration = CMTime(value: 1, timescale: requestedFPS)
+        let duration = CMTime(value: 1, timescale: actualFPS)
         device.activeVideoMinFrameDuration = duration
         device.activeVideoMaxFrameDuration = duration
         let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-        return CaptureConfiguration(width: d.width, height: d.height, fps: requestedFPS)
+        return CaptureConfiguration(width: d.width, height: d.height, fps: actualFPS)
     }
 
     private func changeCamera(to device: AVCaptureDevice, completion: ((CameraInfo?) -> Void)?) {

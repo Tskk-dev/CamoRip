@@ -4,7 +4,7 @@
 implements an activatable `IMFMediaSourceEx`, one `IMFMediaStream2`, event queues,
 capture stream and legacy sensor profile attributes, pipeline sample allocator
 support, sample request tokens, timestamps and stream start/stop/shutdown.
-The only output type is NV12, 1920×1080 at 30 frames/second. The companion scales
+The only output type is NV12, 1920×1080 at 60 frames/second. The companion scales
 and letterboxes camera frames into this type so switching front/rear cameras
 does not change the webcam's advertised media type.
 
@@ -24,7 +24,7 @@ ctest --test-dir artifacts/native -C Release --output-on-failure
 
 `ProviderSmokeTest.exe` loads the DLL directly without registering a camera or
 writing COM registry entries. It verifies source activation and helper release,
-explicit activation shutdown and reactivation, one NV12 1080p30
+explicit activation shutdown and reactivation, one NV12 1080p60
 stream, real pixels through the frame channel, 24 requests with alternating
 null/non-null tokens across allocator reuse, monotonic sample timestamps,
 the placeholder after the writer closes, stop/restart and shutdown. Windows runners need
@@ -49,7 +49,7 @@ camera enumeration, USB capture or meeting-app compatibility.
 
 Camera API calls and their COM/MF teardown run on one dedicated MTA thread.
 Sample requests are bounded at four outstanding tokens, and a native worker
-paces delivery at 30 fps using the pipeline's allocator. Stopping flushes
+paces delivery at 60 fps using the pipeline's allocator. Stopping flushes
 pending requests. Disconnected, stopped, or stale input uses a neutral camera
 icon, so clients continue receiving a valid stream.
 

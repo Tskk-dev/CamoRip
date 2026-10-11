@@ -31,12 +31,12 @@ final class VideoEncoder {
 
     private var lastWidth: Int32 = 1920
     private var lastHeight: Int32 = 1080
-    private var lastFPS: Int32 = 30
+    private var lastFPS: Int32 = 60
     private var lastBitrate: Int = 8_000_000
 
     // MARK: - Lifecycle
 
-    func prepare(width: Int32, height: Int32, fps: Int32 = 30, bitrate: Int = 8_000_000) {
+    func prepare(width: Int32, height: Int32, fps: Int32 = 60, bitrate: Int = 12_000_000) {
         encoderQueue.async { [weak self] in
             self?.createSession(width: width, height: height, fps: fps, bitrate: bitrate)
         }
@@ -107,7 +107,7 @@ final class VideoEncoder {
         let dur = CMSampleBufferGetDuration(sampleBuffer)
 
         var flags: VTEncodeInfoFlags = []
-        // Force keyframe every 2 seconds (at 30fps = 60 frames)
+        // Force a keyframe every two seconds at the negotiated capture rate.
         let forceKeyframe = frameCount % max(1, Int(lastFPS) * 2) == 0
         let frameProperties: CFDictionary? = forceKeyframe
             ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary

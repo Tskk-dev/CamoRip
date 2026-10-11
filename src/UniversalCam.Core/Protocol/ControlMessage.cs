@@ -67,7 +67,7 @@ public sealed record Configure : ControlMessage
     public override string Type => "configure";
 
     [JsonPropertyName("resolution")]  public string Resolution { get; init; } = "1920x1080";
-    [JsonPropertyName("fps")]         public int    Fps        { get; init; } = 30;
+    [JsonPropertyName("fps")]         public int    Fps        { get; init; } = 60;
     [JsonPropertyName("codec")]       public string Codec      { get; init; } = "h264";
     [JsonPropertyName("bitrate")]     public int    Bitrate    { get; init; } = 8_000_000;
 }

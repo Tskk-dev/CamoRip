@@ -34,6 +34,7 @@ struct Decoder {
     UINT32 range = MFNominalRange_16_235;
     bool mfStarted = false;
     bool discontinuity = true;
+    LONGLONG previousSampleTime = -1;
     CO_MTA_USAGE_COOKIE mtaCookie = nullptr;
 
     ~Decoder() {
@@ -111,12 +112,20 @@ struct Decoder {
         ComPtr<IMFSample> sample;
         RETURN_IF_FAILED(MFCreateSample(&sample));
         RETURN_IF_FAILED(sample->AddBuffer(buffer.Get()));
-        RETURN_IF_FAILED(sample->SetSampleTime(timestamp * 10));
-        RETURN_IF_FAILED(sample->SetSampleDuration(10'000'000 / 30));
+        const LONGLONG sampleTime = timestamp * 10;
+        LONGLONG sampleDuration = 10'000'000 / 60;
+        if (previousSampleTime >= 0 && sampleTime > previousSampleTime &&
+            sampleTime - previousSampleTime <= 10'000'000)
+            sampleDuration = sampleTime - previousSampleTime;
+        RETURN_IF_FAILED(sample->SetSampleTime(sampleTime));
+        RETURN_IF_FAILED(sample->SetSampleDuration(sampleDuration));
         if (keyframe) sample->SetUINT32(MFSampleExtension_CleanPoint, TRUE);
         if (discontinuity) sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
         const HRESULT submitted = transform->ProcessInput(0, sample.Get(), 0);
-        if (SUCCEEDED(submitted)) discontinuity = false;
+        if (SUCCEEDED(submitted)) {
+            discontinuity = false;
+            previousSampleTime = sampleTime;
+        }
         return submitted;
     }
 
@@ -199,6 +208,7 @@ struct Decoder {
 
     HRESULT Reset() {
         discontinuity = true;
+        previousSampleTime = -1;
         RETURN_IF_FAILED(transform->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0));
         return transform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
     }

@@ -29,7 +29,7 @@ inline constexpr GUID UCAM_FRAME_PATH = {0xab79b379,0xcfad,0x46e1,{0x97,0x61,0x7
 inline constexpr DWORD FrameWidth = 1920;
 inline constexpr DWORD FrameHeight = 1080;
 inline constexpr DWORD FrameBytes = FrameWidth * FrameHeight * 3 / 2;
-inline constexpr LONGLONG FrameDuration = 10'000'000 / 30;
+inline constexpr LONGLONG FrameDuration = 10'000'000 / 60;
 extern std::atomic<long> g_objects;
 extern std::atomic<long> g_locks;
 struct ObjectLifetime {

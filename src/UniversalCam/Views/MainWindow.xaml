@@ -24,7 +24,7 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center">
                 <TextBlock x:Name="DeviceStatus" Text="Connecting…" FontSize="16" FontWeight="SemiBold"/>
-                <TextBlock x:Name="VideoStatus" Text="Webcam output: 1920 × 1080 at 30 fps" Foreground="#AEBCCD" Margin="0,4,0,0"/>
+                <TextBlock x:Name="VideoStatus" Text="Webcam output: 1920 × 1080 at 60 fps" Foreground="#AEBCCD" Margin="0,4,0,0"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="SwitchCamera" Content="Switch camera" IsEnabled="False" Click="OnSwitchCamera"/>

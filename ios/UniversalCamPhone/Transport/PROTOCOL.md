@@ -31,16 +31,16 @@ The capture clock is not synchronized to the PC's wall clock.
 Windows -> phone: {"type":"welcome"}
 phone -> Windows: {"type":"hello","deviceName":"iPhone","capabilities":["h264","usb","video_only"]}
 phone -> Windows: {"type":"orientation_changed","orientation":"landscape"}
-Windows -> phone: {"type":"configure","resolution":"1920x1080","fps":30,"codec":"h264","bitrate":8000000}
-phone -> Windows: {"type":"configure_ack","resolution":"1920x1080","fps":30}
+Windows -> phone: {"type":"configure","resolution":"1920x1080","fps":60,"codec":"h264","bitrate":12000000}
+phone -> Windows: {"type":"configure_ack","resolution":"1920x1080","fps":60}
 Windows -> phone: {"type":"start_stream"}
 phone -> Windows: video packets
 ```
 
 `configure_ack` contains the **actual** capture dimensions. It may be 1280x720
-when a front camera cannot supply 1080p. Windows must honor a new acknowledgement
+when a front camera cannot supply the requested size/rate. Windows must honor a new acknowledgement
 after `switch_camera`, including while a stream is active. Supported requests:
-H.264, width 640–1920, height 360–1080, 15–30 fps, bitrate 0.5–12 Mbps. Capture
+H.264, width 640–1920, height 360–1080, 15–60 fps, bitrate 0.5–20 Mbps. Capture
 chooses the largest supported 16:9 format within requested dimensions.
 
 `start_stream` and `stop_stream` may originate on either side. Phone buttons send

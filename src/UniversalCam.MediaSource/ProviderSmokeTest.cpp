@@ -50,7 +50,7 @@ HRESULT Verify(HMODULE module) {
     CHECK_HR(type->GetGUID(MF_MT_SUBTYPE, &subtype));
     CHECK_HR(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height));
     CHECK_HR(MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, &rate, &denominator));
-    if (!selected || width != FrameWidth || height != FrameHeight || rate != 30 || denominator != 1 || subtype != MFVideoFormat_NV12) return MF_E_INVALIDMEDIATYPE;
+    if (!selected || width != FrameWidth || height != FrameHeight || rate != 60 || denominator != 1 || subtype != MFVideoFormat_NV12) return MF_E_INVALIDMEDIATYPE;
     PROPVARIANT position{};
     CHECK_HR(source->Start(presentation.Get(), nullptr, &position));
     ComPtr<IMFMediaStream> stream;
@@ -128,7 +128,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     CoUninitialize();
     if (FAILED(hr)) { std::cerr << "Provider smoke test failed: 0x" << std::hex << static_cast<unsigned long>(hr) << '\n'; return 1; }
-    std::cout << "Provider source: NV12 1080p30, 24 samples, shared frames, closed-writer placeholder, recycled/null tokens, timestamps, restart, shutdown passed.\n";
+    std::cout << "Provider source: NV12 1080p60, 24 samples, shared frames, closed-writer placeholder, recycled/null tokens, timestamps, restart, shutdown passed.\n";
     return 0;
 }
 

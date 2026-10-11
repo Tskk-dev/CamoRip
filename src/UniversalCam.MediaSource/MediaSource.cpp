@@ -32,7 +32,7 @@ HRESULT CreateVideoType(IMFMediaType** result) {
     CHECK_HR(type->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709));
     CHECK_HR(type->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709));
     CHECK_HR(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, FrameWidth, FrameHeight));
-    CHECK_HR(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, 30, 1));
+    CHECK_HR(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, 60, 1));
     CHECK_HR(MFSetAttributeRatio(type.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1));
     return type.CopyTo(result);
 }
@@ -140,7 +140,7 @@ class MediaStream final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
             const auto now = std::chrono::steady_clock::now();
             if (next < now - std::chrono::milliseconds(100)) next = now;
             if (wake_.wait_until(lock, next, [this, epoch] { return shutdown_ || epoch != generation_ || state_ != MF_STREAM_STATE_RUNNING; })) continue;
-            next += std::chrono::nanoseconds(1'000'000'000 / 30);
+            next += std::chrono::nanoseconds(1'000'000'000 / 60);
             auto token = requests_.front(); requests_.pop_front();
             ComPtr<IMFSample> sample;
             HRESULT hr = allocator_->AllocateSample(&sample);
@@ -215,7 +215,7 @@ public:
             CHECK_HR(MFGetAttributeSize(type, MF_MT_FRAME_SIZE, &width, &height));
             CHECK_HR(MFGetAttributeRatio(type, MF_MT_FRAME_RATE, &rate, &denominator));
             if (subtype != MFVideoFormat_NV12 || width != FrameWidth || height != FrameHeight ||
-                denominator == 0 || static_cast<UINT64>(rate) != 30ull * denominator) return MF_E_INVALIDMEDIATYPE;
+                denominator == 0 || static_cast<UINT64>(rate) != 60ull * denominator) return MF_E_INVALIDMEDIATYPE;
             ComPtr<IMFMediaTypeHandler> handler;
             CHECK_HR(descriptor_->GetMediaTypeHandler(&handler));
             CHECK_HR(handler->IsMediaTypeSupported(type, nullptr));
@@ -279,7 +279,7 @@ public:
         ComPtr<IMFSensorProfile> legacy;
         CHECK_HR(MFCreateSensorProfileCollection(&profiles));
         CHECK_HR(MFCreateSensorProfile(KSCAMERAPROFILE_Legacy, 0, nullptr, &legacy));
-        CHECK_HR(legacy->AddProfileFilter(0, L"((RES==;FRT<=30,1;SUT==))"));
+        CHECK_HR(legacy->AddProfileFilter(0, L"((RES==;FRT<=60,1;SUT==))"));
         CHECK_HR(profiles->AddProfile(legacy.Get()));
         CHECK_HR(attributes_->SetUnknown(MF_DEVICEMFT_SENSORPROFILE_COLLECTION, profiles.Get()));
         WCHAR* path = nullptr; UINT32 pathLength = 0;

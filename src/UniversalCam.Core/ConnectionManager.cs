@@ -59,11 +59,11 @@ public sealed class ConnectionManager : IAsyncDisposable
         await _usb.ConnectAsync(ct);
     }
 
-    public Task ConfigureAsync(string resolution = "1920x1080", int fps = 30,
+    public Task ConfigureAsync(string resolution = "1920x1080", int fps = 60,
         string codec = "h264", int bitrate = 8_000_000, CancellationToken ct = default)
     {
         if (codec != "h264") throw new ArgumentException("Only H.264 is supported.", nameof(codec));
-        if (fps is < 1 or > 30) throw new ArgumentOutOfRangeException(nameof(fps), "Choose 1–30 fps.");
+        if (fps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(fps), "Choose 1–60 fps.");
         if (bitrate is < 100_000 or > 20_000_000) throw new ArgumentOutOfRangeException(nameof(bitrate));
         if (ActiveTransport != TransportType.USB) return Task.CompletedTask;
         _configurationGeneration = Volatile.Read(ref _generation);

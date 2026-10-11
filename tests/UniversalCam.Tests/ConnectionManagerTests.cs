@@ -9,6 +9,14 @@ namespace UniversalCam.Tests;
 public class ConnectionManagerTests
 {
     [Fact]
+    public async Task ConfigureAsync_Allows60AndRejectsHigherRates()
+    {
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(1), TimeSpan.Zero));
+        await manager.ConfigureAsync(fps: 60);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => manager.ConfigureAsync(fps: 61));
+    }
+
+    [Fact]
     public async Task UnsolicitedConfigurationAck_DoesNotRestartAStoppedPhone()
     {
         using var service = new FakeAppleService();

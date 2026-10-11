@@ -4,7 +4,7 @@ using UniversalCam.Core.Video;
 
 namespace UniversalCam.VirtualCamera;
 
-/// <summary>Publishes a fixed 1080p30 Windows 11 camera. Missing/stopped phone video shows a placeholder.</summary>
+/// <summary>Publishes a fixed 1080p60 Windows 11 camera. Missing/stopped phone video shows a placeholder.</summary>
 public sealed class VirtualCameraSession : IDisposable
 {
     private readonly object _sync = new();
@@ -49,7 +49,7 @@ public sealed class VirtualCameraSession : IDisposable
             _bridge.Open();
             WritePlaceholder();
             _server = new MfVirtualCameraServer(_bridge.Path);
-            SetStatus("USB iPhone Camera is available in camera apps (1080p30).");
+            SetStatus("USB iPhone Camera is available in camera apps (1080p60).");
         }
         catch (DllNotFoundException)
         {

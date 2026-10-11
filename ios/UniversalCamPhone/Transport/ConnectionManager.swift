@@ -13,7 +13,7 @@ final class ConnectionManager: ObservableObject {
     @Published private(set) var activeTransport: TransportType?
     @Published private(set) var usbListening = false
     @Published private(set) var wantsStreaming = false
-    @Published private(set) var formatLabel = "Rear camera: up to 1080p30"
+    @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
     weak var cameraSession: CameraSession?
 
     private let transport = USBTransport()
@@ -200,9 +200,9 @@ final class ConnectionManager: ObservableObject {
             guard codec.lowercased() == "h264", dimensions.count == 2,
                   let width = Int32(dimensions[0]), let height = Int32(dimensions[1]),
                   (640...1920).contains(width), (360...1080).contains(height),
-                  (15...30).contains(fps), (500_000...12_000_000).contains(requestedBitrate),
+                  (15...60).contains(fps), (500_000...20_000_000).contains(requestedBitrate),
                   let camera = cameraSession else {
-                fail(code: "unsupported_configuration", message: "Use H.264, up to 1920x1080 at 15–30 fps."); return
+                fail(code: "unsupported_configuration", message: "Use H.264, up to 1920x1080 at 15–60 fps."); return
             }
             stopStreaming(notifyPeer: false)
             configuring = true

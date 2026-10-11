@@ -60,7 +60,7 @@ public partial class MainWindow : Window
         };
         _connection.Diagnostic += (_, message) => Ui(() => Diagnostic.Text = message);
         _connection.ConfigurationAcknowledged += (_, configuration) => Ui(() =>
-            VideoStatus.Text = $"Capture: {configuration.Resolution} at {configuration.Fps} fps · Webcam: 1080p30");
+            VideoStatus.Text = $"Capture: {configuration.Resolution} at {configuration.Fps} fps · Webcam: 1080p60");
         _connection.StreamStateChanged += (_, streaming) =>
         {
             if (!streaming) Interlocked.Increment(ref _generation);
@@ -106,7 +106,7 @@ public partial class MainWindow : Window
 
     private async Task ConfigurePhone()
     {
-        try { await _connection.ConfigureAsync("1920x1080", 30, "h264", 8_000_000); }
+        try { await _connection.ConfigureAsync("1920x1080", 60, "h264", 12_000_000); }
         catch (Exception ex) { Ui(() => Diagnostic.Text = ex.Message); App.Log(ex); }
     }
 

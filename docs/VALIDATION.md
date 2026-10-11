@@ -20,7 +20,7 @@ Use the Actions result to establish which of these passed for a particular commi
 - [ ] Connect and trust with a data cable; establish USB video with Wi-Fi disabled.
 - [ ] Start/stop on the phone and PC. Confirm stopped video becomes neutral in camera clients and the phone can sleep after stopping.
 - [ ] Switch front/rear repeatedly. Confirm actual reported capture dimensions, keyframe recovery, and stable output.
-- [ ] Run the rear camera at native 1920×1080 at 30 fps for at least 15 minutes. Record output rate, latency, phone temperature/thermal changes, and any stalls.
+- [ ] Run the rear camera at native 1920×1080 at 60 fps for at least 15 minutes. Record output rate, latency, phone temperature/thermal changes, and any stalls.
 - [ ] While streaming, unplug/reconnect ten times. Verify the old socket/capture/decoder state is discarded and the new session recovers without restarting apps.
 - [ ] Open Windows camera enumeration and a preview app. Verify **USB iPhone Camera** appears and produces frames.
 - [ ] Select the camera in at least one intended meeting app, e.g. Zoom or Teams; record the actual app and whether its preview/call is stable.
@@ -29,4 +29,4 @@ Use the Actions result to establish which of these passed for a particular commi
 - [ ] Confirm session storage ACLs allow the current user and required Windows camera service, and exclude unrelated local users.
 - [ ] Observe network behavior on both devices. Confirm camera traffic uses the cable and loopback endpoints; no app audio stream, Wi-Fi camera endpoint, or external video server is active.
 
-If a physical check fails, keep the release status incomplete and report the specific evidence. Do not infer successful 1080p30 or client compatibility from compilation.
+If a physical check fails, keep the release status incomplete and report the specific evidence. Do not infer successful 1080p60 or client compatibility from compilation.

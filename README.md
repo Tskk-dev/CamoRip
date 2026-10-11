@@ -11,7 +11,7 @@ Video stays on the iPhone, USB cable, and Windows PC. The phone listens on loopb
 - iPhone 6s Plus running iOS 15.x, a data-capable Lightning cable, and camera permission.
 - An existing jailbreak-compatible signing/install route, or a free Apple ID signing tool. The CI IPA is unsigned and is not automatically installable on every jailbreak.
 
-The main target is rear camera 1920×1080 at 30 fps. The app reports the actual capture format; the older front camera can use a lower resolution. Windows produces a fixed 1080p30 webcam output and scales the input as needed.
+The main target is rear camera 1920×1080 at 60 fps. The app reports the actual capture format and frame rate; the front camera can use a lower resolution and frame rate. Windows produces a fixed 1080p60 webcam output and repeats frames when the selected iPhone camera runs slower.
 
 ## Install and use
 
@@ -38,7 +38,7 @@ The Windows virtual camera source is a user-mode COM DLL. Its session lifetime i
 
 ## Validation status
 
-Check the Actions run for build/test results for the exact commit you download. Compilation and automated protocol/decoder tests are separate from physical acceptance. Installation on the actual jailbreak, USB loopback forwarding, sustained rear 1080p30, reconnect behavior, and recognition in a chosen meeting app require the checks in `docs/VALIDATION.md` before a working device release can be claimed.
+Check the Actions run for build/test results for the exact commit you download. Compilation and automated protocol/decoder tests are separate from physical acceptance. Installation on the actual jailbreak, USB loopback forwarding, sustained rear 1080p60, reconnect behavior, and recognition in a chosen meeting app require the checks in `docs/VALIDATION.md` before a working device release can be claimed.
 
 Microphone audio, Wi-Fi streaming, image effects, Windows 10, ARM Windows, and custom DirectShow/kernel drivers are outside v1.
 

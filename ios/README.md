@@ -41,7 +41,7 @@ https://developer.apple.com/help/account/basics/about-your-developer-account
    through Apple's USB multiplexing service.
 5. Use Start/Stop on either device. Switch selects the other physical camera.
 
-The rear camera targets 1920×1080 at 30 fps. Camera configuration reports its
+The rear camera targets 1920×1080 at 60 fps. Camera configuration reports its
 actual dimensions in `configure_ack`; the front camera on this phone may use
 1280×720. The Windows virtual camera can scale that to its advertised output.
 Switching camera restarts H.264 with an IDR frame and SPS/PPS.
@@ -65,6 +65,6 @@ the app; there is no Internet service or account.
 Physical acceptance remains necessary: unsigned installer compatibility, denied
 camera permission and Settings recovery, front/rear switching, locking and
 foreground recovery, disconnect/reconnect during a stream, and sustained rear
-1080p30 performance/temperature. A macOS hosted build cannot validate those on an
+1080p60 performance/temperature. A macOS hosted build cannot validate those on an
 iPhone 6s Plus. Also verify that the listener is unreachable from another machine
 over Wi-Fi while USB streaming succeeds.
