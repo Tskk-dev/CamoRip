@@ -27,7 +27,7 @@
        <Button x:Name="StreamButton" Content="Start video" Click="OnToggleStream" IsEnabled="False" HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}" />
        <Button x:Name="SwitchCamera" Content="Switch camera" Click="OnSwitchCamera" IsEnabled="False" HorizontalAlignment="Stretch" />
        <ToggleSwitch x:Name="Torch" Header="Torch" Toggled="OnTorch" IsEnabled="False" />
-       <Slider x:Name="TorchLevel" Header="Torch brightness" Minimum="0.01" Maximum="1" Value="0.5" ValueChanged="OnTorchLevel" IsEnabled="False" AutomationProperties.Name="Torch brightness" />
+       <Slider x:Name="TorchLevel" Header="Torch brightness" Minimum="0.01" Maximum="1" StepFrequency="0.01" Value="0.5" ValueChanged="OnTorchLevel" IsEnabled="False" AutomationProperties.Name="Torch brightness" />
        <TextBlock x:Name="VideoStatus" Text="1080p · 60 fps" TextWrapping="Wrap" />
       </StackPanel>
       <StackPanel x:Name="AdjustmentsPage" Spacing="12" Visibility="Collapsed">
