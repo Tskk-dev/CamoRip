@@ -22,4 +22,12 @@ target_link_libraries(ProviderSmokeTest PRIVATE mfplat mf mfuuid mfsensorgroup o
 enable_testing()
 add_test(NAME ProviderSmokeTest COMMAND ProviderSmokeTest "$<TARGET_FILE:UCamMediaSource>")
 set_tests_properties(ProviderSmokeTest PROPERTIES TIMEOUT 20)
+add_executable(FrameChannelTests FrameChannelTests.cpp)
+target_compile_features(FrameChannelTests PRIVATE cxx_std_17)
+target_compile_definitions(FrameChannelTests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00 NTDDI_VERSION=0x0A00000B)
+target_compile_options(FrameChannelTests PRIVATE /W4 /EHsc)
+set_property(TARGET FrameChannelTests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(FrameChannelTests PRIVATE advapi32)
+add_test(NAME FrameChannelTests COMMAND FrameChannelTests)
+set_tests_properties(FrameChannelTests PROPERTIES TIMEOUT 10)
 

@@ -106,7 +106,7 @@ public partial class MainWindow : Window
         _cameraTask = Task.Run(PublishCameraFrames);
         _previewTask = Task.Run(PreviewFrames);
         _metricsTask = Task.Run(CollectMetrics);
-        App.Log("INFO", "Pipeline v2: dedicated decoder; independent latest-frame camera/preview; compressed queue limited to 32 frames, 16 MiB, 250 ms.");
+        App.Log("INFO", "Pipeline v2: dedicated decoder; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
         try { await _connection.StartAsync(); }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
     }

@@ -23,14 +23,14 @@ public sealed class CompressedVideoQueue
     private bool _waitingForKeyframe = true, _completed;
     private string _resetReason = "initial connection";
 
-    public CompressedVideoQueue(int capacity = 32, int maxBytes = 16 * 1024 * 1024,
+    public CompressedVideoQueue(int capacity = 64, int maxBytes = 16 * 1024 * 1024,
         TimeSpan? maxAge = null, Func<long>? clock = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 1);
         _capacity = capacity;
         _maxBytes = maxBytes;
-        _maxAge = maxAge ?? TimeSpan.FromMilliseconds(250);
+        _maxAge = maxAge ?? TimeSpan.FromMilliseconds(500);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_maxAge, TimeSpan.Zero);
         _clock = clock ?? Stopwatch.GetTimestamp;
     }

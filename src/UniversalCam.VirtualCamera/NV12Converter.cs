@@ -70,30 +70,46 @@ public static class NV12Converter
         int left = ((outputWidth - drawWidth) / 2) & ~1;
         int top = ((outputHeight - drawHeight) / 2) & ~1;
 
+        var sourceColumns = new int[drawWidth];
+        for (int x = 0; x < drawWidth; ++x)
+            sourceColumns[x] = (int)((long)x * width / drawWidth);
         // Copy luma rows with nearest-neighbor scaling. Avoid all per-pixel color
         // conversion on the normal 1080p path and only scale front-camera formats.
+        int previousSourceRow = -1;
         for (int y = 0; y < drawHeight; ++y)
         {
             int sourceY = (int)((long)y * height / drawHeight);
             int destination = (top + y) * outputWidth + left;
             int sourceRow = sourceY * width;
+            if (sourceRow == previousSourceRow)
+            {
+                Array.Copy(output, destination - outputWidth, output, destination, drawWidth);
+                continue;
+            }
+            previousSourceRow = sourceRow;
             for (int x = 0; x < drawWidth; ++x)
             {
-                int sourceX = (int)((long)x * width / drawWidth);
-                output[destination + x] = nv12[sourceRow + sourceX];
+                output[destination + x] = nv12[sourceRow + sourceColumns[x]];
             }
         }
 
         int inputUvStart = width * height;
         int outputUvStart = outputYBytes;
+        previousSourceRow = -1;
         for (int y = 0; y < drawHeight; y += 2)
         {
             int sourceUvRow = (int)((long)(y / 2) * (height / 2) / (drawHeight / 2));
             int destinationUv = outputUvStart + ((top + y) / 2) * outputWidth + left;
             int sourceUv = inputUvStart + sourceUvRow * width;
+            if (sourceUv == previousSourceRow)
+            {
+                Array.Copy(output, destinationUv - outputWidth, output, destinationUv, drawWidth);
+                continue;
+            }
+            previousSourceRow = sourceUv;
             for (int x = 0; x < drawWidth; x += 2)
             {
-                int sourceX = ((int)((long)x * width / drawWidth)) & ~1;
+                int sourceX = sourceColumns[x] & ~1;
                 output[destinationUv + x] = nv12[sourceUv + sourceX];
                 output[destinationUv + x + 1] = nv12[sourceUv + sourceX + 1];
             }
