@@ -70,7 +70,10 @@ This is hardware decoding with CPU readback, not an entirely GPU-resident path.
 If GPU initialization, format negotiation or readback fails, decoding falls back
 to software and waits for a keyframe when needed. The backend, adapter and
 fallback HRESULT are written to the Windows log. Hosted CI validates software
-fallback; GPU acceleration and sustained throughput need validation on the PC.
+fallback. On the target Vega 10 PC, all 72 tests passed with GPU output required
+for the encoded-pattern regression, including 720p-to-1080p switching and pixel
+comparison against software decoding. Sustained USB/meeting-app throughput
+still needs a physical streaming retest.
 
 ## Build
 
