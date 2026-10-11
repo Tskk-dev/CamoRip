@@ -49,6 +49,11 @@ companion preserves the preceding run as `previous.log`; unhandled managed
 exceptions and normal shutdowns are logged too. PC pipeline changes do not
 require reinstalling the phone app.
 
+The decoder honors the Media Foundation display aperture: a padded 1920x1088
+H.264 surface is copied as its valid 1920x1080 image, including the correct UV
+plane offset. This keeps normal 1080p publishing on the NV12 passthrough path
+instead of running a full-frame scalar resize.
+
 ## Build
 
 Windows needs Visual Studio 2022 C++ tools, a Windows 11 SDK, CMake, .NET SDK 8 or newer, and Inno Setup 6 for installer packaging. From a Developer PowerShell:

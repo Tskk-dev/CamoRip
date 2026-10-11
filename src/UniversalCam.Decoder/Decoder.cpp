@@ -32,6 +32,7 @@ struct Decoder {
     // conversions on every frame and could reduce real-time capture to ~1 fps.
     std::vector<uint8_t> nv12;
     UINT32 width = 0, height = 0;
+    UINT32 displayWidth = 0, displayHeight = 0, cropLeft = 0, cropTop = 0;
     LONG stride = 0;
     bool mfStarted = false;
     bool discontinuity = true;
@@ -93,6 +94,30 @@ struct Decoder {
             UINT32 rawStride = 0;
             if (SUCCEEDED(candidate->GetUINT32(MF_MT_DEFAULT_STRIDE, &rawStride))) stride = static_cast<LONG>(rawStride);
             else stride = static_cast<LONG>(width);
+            // H.264 is macroblock-aligned: 1080p commonly has a 1088-row
+            // storage surface. Copy the valid aperture, not those padding rows.
+            // Otherwise managed code unnecessarily scales every 1080p frame.
+            displayWidth = width; displayHeight = height; cropLeft = cropTop = 0;
+            MFVideoArea area{};
+            UINT32 areaBytes = 0;
+            HRESULT aperture = candidate->GetBlob(MF_MT_MINIMUM_DISPLAY_APERTURE,
+                reinterpret_cast<UINT8*>(&area), sizeof(area), &areaBytes);
+            if (aperture == MF_E_ATTRIBUTENOTFOUND)
+                aperture = candidate->GetBlob(MF_MT_GEOMETRIC_APERTURE,
+                    reinterpret_cast<UINT8*>(&area), sizeof(area), &areaBytes);
+            if (SUCCEEDED(aperture)) {
+                if (areaBytes != sizeof(area) || area.OffsetX.fract || area.OffsetY.fract ||
+                    area.OffsetX.value < 0 || area.OffsetY.value < 0 || area.Area.cx <= 0 || area.Area.cy <= 0)
+                    return MF_E_INVALIDMEDIATYPE;
+                cropLeft = static_cast<UINT32>(area.OffsetX.value);
+                cropTop = static_cast<UINT32>(area.OffsetY.value);
+                displayWidth = static_cast<UINT32>(area.Area.cx);
+                displayHeight = static_cast<UINT32>(area.Area.cy);
+                if ((cropLeft | cropTop | displayWidth | displayHeight) & 1 ||
+                    static_cast<uint64_t>(cropLeft) + displayWidth > width ||
+                    static_cast<uint64_t>(cropTop) + displayHeight > height)
+                    return MF_E_INVALIDMEDIATYPE;
+            } else if (aperture != MF_E_ATTRIBUTENOTFOUND) return aperture;
             return S_OK;
         }
     }
@@ -139,19 +164,19 @@ struct Decoder {
         const size_t ySize = static_cast<size_t>(stride) * height;
         const size_t required = ySize + static_cast<size_t>(stride) * (height / 2);
         if (currentLength < required) { buffer->Unlock(); return MF_E_BUFFERTOOSMALL; }
-        const size_t yBytes = static_cast<size_t>(width) * height;
+        const size_t yBytes = static_cast<size_t>(displayWidth) * displayHeight;
         const size_t frameBytes = yBytes + yBytes / 2;
         try { nv12.resize(frameBytes); }
         catch (...) { buffer->Unlock(); return E_OUTOFMEMORY; }
-        for (UINT32 row = 0; row < height; ++row) {
-            memcpy(nv12.data() + static_cast<size_t>(row) * width,
-                pixels + static_cast<size_t>(row) * stride, width);
+        for (UINT32 row = 0; row < displayHeight; ++row) {
+            memcpy(nv12.data() + static_cast<size_t>(row) * displayWidth,
+                pixels + static_cast<size_t>(row + cropTop) * stride + cropLeft, displayWidth);
         }
         const BYTE* inputUv = pixels + ySize;
         BYTE* outputUv = nv12.data() + yBytes;
-        for (UINT32 row = 0; row < height / 2; ++row)
-            memcpy(outputUv + static_cast<size_t>(row) * width,
-                inputUv + static_cast<size_t>(row) * stride, width);
+        for (UINT32 row = 0; row < displayHeight / 2; ++row)
+            memcpy(outputUv + static_cast<size_t>(row) * displayWidth,
+                inputUv + static_cast<size_t>(row + cropTop / 2) * stride + cropLeft, displayWidth);
         buffer->Unlock();
         LONGLONG sampleTime = 0;
         RETURN_IF_FAILED(sample->GetSampleTime(&sampleTime));
@@ -184,8 +209,8 @@ struct Decoder {
             RETURN_IF_FAILED(produced);
             if (!output.pSample) return E_UNEXPECTED;
             RETURN_IF_FAILED(Convert(output.pSample, timestamp));
-            *outputWidth = static_cast<int>(width);
-            *outputHeight = static_cast<int>(height);
+            *outputWidth = static_cast<int>(displayWidth);
+            *outputHeight = static_cast<int>(displayHeight);
             *pixels = nv12.data();
             *length = static_cast<int>(nv12.size());
             return S_OK;

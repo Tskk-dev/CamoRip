@@ -45,3 +45,10 @@ backlog by size and age, waits for one keyframe after an overflow, and adds
 per-stage timing and freshness diagnostics. Reproduce on the phone/PC and
 compare `latest.log` after installing the new Windows artifact. No successful
 physical retest has been recorded for this change.
+
+A local synthetic 1920x1080 H.264 stream also reproduced a 1920x1088 padded
+decoder output. That incorrectly selected the managed scalar-resize path on
+every frame. The native decoder now packs only the valid display aperture;
+regression fixtures cover 1920x1080 and 50x50 cropped images. This synthetic
+finding identifies an unnecessary conversion, but does not measure the phone's
+actual bitstream or establish sustained 60 fps.
