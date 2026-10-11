@@ -13,12 +13,11 @@ public partial class App : Application
     private MainWindow? _window;
     private TrayIcon? _tray;
     private bool _exiting;
-    private static StreamWriter? _log;
+    private static readonly DiagnosticFileLog LogFile = new(LogDirectory);
     private static DispatcherQueue? _dispatcher;
     internal static AppSettings Settings { get; } = AppSettings.Load();
     internal StreamingService Service { get; } = new();
     internal static string LogDirectory => Path.Combine(AppSettings.DirectoryPath, "Logs");
-    private static string LogPath => Path.Combine(LogDirectory, "latest.log");
     public App() { InitializeComponent(); }
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
@@ -56,7 +55,7 @@ public partial class App : Application
         _activationWait?.Unregister(null);
         _activate?.Dispose();
         Log("INFO", "CamoRip exited.");
-        lock (typeof(App)) { _log?.Dispose(); _log = null; }
+        LogFile.Dispose();
         _instance?.ReleaseMutex(); _instance?.Dispose();
         _window?.Close();
         Exit();
@@ -64,29 +63,7 @@ public partial class App : Application
     internal static void Ui(Action action) => _dispatcher?.TryEnqueue(() => action());
     internal static async void Run(Func<Task> work)
     { try { await work(); } catch (Exception ex) { Log(ex); } }
-    internal static void SetLogging(bool enabled, bool rotate = false)
-    {
-        lock (typeof(App))
-        {
-            _log?.Dispose(); _log = null;
-            if (!enabled) return;
-            try
-            {
-                Directory.CreateDirectory(LogDirectory);
-                if (rotate && File.Exists(LogPath)) File.Copy(LogPath, Path.Combine(LogDirectory, "previous.log"), true);
-                _log = new StreamWriter(LogPath, !rotate) { AutoFlush = true };
-                Log("INFO", "CamoRip diagnostic logging enabled.");
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        }
-    }
+    internal static void SetLogging(bool enabled, bool rotate = false) => LogFile.SetEnabled(enabled, rotate);
     internal static void Log(Exception error) => Log("ERROR", error.ToString());
-    internal static void Log(string level, string message)
-    {
-        lock (typeof(App))
-        {
-            try { _log?.WriteLine($"{DateTimeOffset.Now:O} [{level}] {message}"); }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
-        }
-    }
+    internal static void Log(string level, string message) => LogFile.Write(level, message);
 }

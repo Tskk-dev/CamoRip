@@ -196,6 +196,7 @@ public sealed record ControlRange
 }
 public sealed record CameraState : ControlMessage
 {
+    public bool IsStaleComparedTo(long latestRequest) => RequestId > 0 && RequestId < latestRequest;
     public override string Type => "camera_state";
     public long RequestId { get; init; }
     public string CameraId { get; init; } = "";

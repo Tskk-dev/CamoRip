@@ -102,7 +102,7 @@ public sealed partial class MainWindow : Window
     }
     private void UpdatePreviewVisibility()
     {
-        _service.PreviewVisible = !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
+        _service.PreviewVisible = !_exiting && !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
         bool visible = _service.PreviewVisible && _service.PreviewFps > 0 && _service.Streaming;
         if (_rendering != visible)
         {
@@ -121,7 +121,7 @@ public sealed partial class MainWindow : Window
         Activate(); UpdatePreviewVisibility();
     }
     private void OnRendering(object? sender, object e) => _service.RenderLatestPreview();
-    internal void PrepareExit() { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering; _exiting = true; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
+    internal void PrepareExit() { _exiting = true; _rendering = false; Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
     private void OnPaneToggle(object sender, RoutedEventArgs e) => Navigation.IsPaneOpen = !Navigation.IsPaneOpen;
     private void OnNavigation(object sender, SelectionChangedEventArgs args)
     {
@@ -184,7 +184,7 @@ public sealed partial class MainWindow : Window
     }
     private void ApplyState(CameraState state)
     {
-        if (_switching) return;
+        if (_switching || state.IsStaleComparedTo(_requestId)) return;
         if (string.IsNullOrEmpty(state.CameraId))
         { _state = null; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false; return; }
         _state = state;
