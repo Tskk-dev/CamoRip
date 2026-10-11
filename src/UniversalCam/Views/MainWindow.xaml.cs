@@ -66,6 +66,14 @@ public partial class MainWindow : Window
             App.Log(ex);
         }
 
+        _decoder.BackendChanged += (_, status) =>
+        {
+            App.Log("INFO", $"Decoder backend: {status}");
+            Ui(() => DecoderStatus.Text = status.StartsWith("D3D11 hardware confirmed")
+                ? "Video decoding: GPU accelerated"
+                : status.StartsWith("software") ? "Video decoding: CPU fallback (see diagnostic logs)"
+                : "Video decoding: starting GPU decoder");
+        };
         _decoder.FrameDecoded += (_, frame) =>
         {
             var generation = Interlocked.Read(ref _decodingGeneration);
@@ -106,7 +114,7 @@ public partial class MainWindow : Window
         _cameraTask = Task.Run(PublishCameraFrames);
         _previewTask = Task.Run(PreviewFrames);
         _metricsTask = Task.Run(CollectMetrics);
-        App.Log("INFO", "Pipeline v2: dedicated decoder; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
+        App.Log("INFO", "Pipeline v3: D3D11 hardware preferred; dedicated decoder; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
         try { await _connection.StartAsync(); }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
     }
@@ -266,7 +274,7 @@ public partial class MainWindow : Window
         if (!_connection.IsStreaming) return;
         var message = $"Pipeline fps: USB {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · preview {previewFps:F1} · queue drops {drops}";
         Ui(() => PerformanceStatus.Text = message);
-        App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB");
+        App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB");
     }
 
     private static string FrameAge(long ticks, long now) => ticks == 0 ? "none" : $"{Math.Max(0, Stopwatch.GetElapsedTime(ticks, now).TotalMilliseconds):F0}";

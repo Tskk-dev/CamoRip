@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using UniversalCam.Core.Protocol;
 using UniversalCam.Core.Transport;
 
@@ -13,6 +14,12 @@ namespace UniversalCam.Core.Video;
 public sealed class H264Decoder : IDisposable
 {
     public event EventHandler<DecodedFrame>? FrameDecoded;
+    public event EventHandler<string>? BackendChanged;
+    private bool _preferHardware;
+    private readonly StringBuilder _statusBuffer = new(512);
+    public string BackendStatus { get; private set; } = "not initialized";
+
+    public H264Decoder(bool preferHardware = true) => _preferHardware = preferHardware;
     private const int MfNotAccepting = unchecked((int)0xC00D36B0);
     private readonly object _sync = new();
     private IntPtr _handle;
@@ -29,22 +36,61 @@ public sealed class H264Decoder : IDisposable
             if (frame.Header.IsHevc) throw new NotSupportedException("Only H.264 video is supported.");
             if (frame.Payload.Length != frame.Header.Length || frame.Payload.Length > FrameParser.MaxMediaPayloadLength)
                 throw new InvalidDataException("Invalid video packet length.");
-            if (Interlocked.Exchange(ref _resetPending, 0) != 0) ResetCore();
+            if (Volatile.Read(ref _resetPending) != 0) _waitingForKeyframe = true;
             if (_waitingForKeyframe && !frame.Header.IsKeyframe) return;
-            if (_handle == IntPtr.Zero) Check(Native.UCamDecoderCreate(out _handle), "initialize H.264 decoder");
-            var submitted = Native.UCamDecoderSubmit(_handle, frame.Payload, frame.Payload.Length, frame.Header.PtsUs,
-                frame.Header.IsKeyframe ? 1 : 0);
-            if (submitted == MfNotAccepting)
+            if (_handle == IntPtr.Zero)
+                Check(Native.UCamDecoderCreateWithOptions(_preferHardware ? 1 : 0, out _handle), "initialize H.264 decoder");
+            try
             {
-                ReadAvailableFrames();
-                submitted = Native.UCamDecoderSubmit(_handle, frame.Payload, frame.Payload.Length, frame.Header.PtsUs,
-                    frame.Header.IsKeyframe ? 1 : 0);
+                if (Interlocked.Exchange(ref _resetPending, 0) != 0) ResetCore();
+                SubmitAndRead(frame);
             }
-            if (submitted < 0) { ResetCore(); Check(submitted, "submit H.264 frame"); }
-            _waitingForKeyframe = false;
-            try { ReadAvailableFrames(); }
-            catch { ResetCore(); throw; }
+            catch (COMException error)
+            {
+                // Recreate the MFT without a device manager after a rejected
+                // hardware format, device removal or GPU readback failure.
+                var fallback = Native.UCamDecoderFallBackToSoftware(_handle, error.HResult);
+                if (fallback == 1) { ResetCore(); throw; } // already software
+                _waitingForKeyframe = true;
+                _preferHardware = false;
+                if (fallback < 0)
+                {
+                    Native.UCamDecoderDestroy(_handle);
+                    _handle = IntPtr.Zero;
+                    Check(fallback, "restart the software H.264 decoder");
+                }
+                // A delta frame cannot seed a fresh decoder. Preserve the last
+                // displayed image and wait for the next complete IDR instead.
+                if (frame.Header.IsKeyframe) SubmitAndRead(frame);
+            }
+            finally { UpdateBackendStatus(); }
         }
+    }
+
+    private void SubmitAndRead(MediaFrame frame)
+    {
+        var submitted = Native.UCamDecoderSubmit(_handle, frame.Payload, frame.Payload.Length, frame.Header.PtsUs,
+            frame.Header.IsKeyframe ? 1 : 0);
+        if (submitted == MfNotAccepting)
+        {
+            ReadAvailableFrames();
+            submitted = Native.UCamDecoderSubmit(_handle, frame.Payload, frame.Payload.Length, frame.Header.PtsUs,
+                frame.Header.IsKeyframe ? 1 : 0);
+        }
+        Check(submitted, "submit H.264 frame");
+        _waitingForKeyframe = false;
+        ReadAvailableFrames();
+    }
+
+    private void UpdateBackendStatus()
+    {
+        if (_handle == IntPtr.Zero) return;
+        _statusBuffer.Clear();
+        Check(Native.UCamDecoderGetStatus(_handle, _statusBuffer, _statusBuffer.Capacity), "query decoder backend");
+        var status = _statusBuffer.ToString();
+        if (BackendStatus == status) return;
+        BackendStatus = status;
+        BackendChanged?.Invoke(this, status);
     }
 
     private void ReadAvailableFrames()
@@ -102,7 +148,11 @@ public sealed class H264Decoder : IDisposable
     {
         private const string Library = "UniversalCam.Decoder.dll";
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int UCamDecoderCreate(out IntPtr handle);
+        internal static extern int UCamDecoderCreateWithOptions(int preferHardware, out IntPtr handle);
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int UCamDecoderFallBackToSoftware(IntPtr handle, int reason);
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, CharSet = CharSet.Unicode)]
+        internal static extern int UCamDecoderGetStatus(IntPtr handle, StringBuilder text, int capacity);
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int UCamDecoderSubmit(IntPtr handle, byte[] data, int length, long timestamp, int keyframe);
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
