@@ -64,6 +64,7 @@ public sealed class CompressedVideoQueue
             _frames.Enqueue(new(frame, _generation, now, _resetReason));
             _bytes += frame.Payload.Length;
             _signal.Writer.TryWrite(true);
+            Monitor.PulseAll(_sync);
             return true;
         }
     }
@@ -88,6 +89,24 @@ public sealed class CompressedVideoQueue
         await foreach (var _ in _signal.Reader.ReadAllAsync().ConfigureAwait(false))
         {
             while (TryDequeue(out var frame)) yield return frame;
+        }
+    }
+
+    /// <summary>Use on a dedicated worker; no thread-pool continuation is needed to wake it.</summary>
+    public IEnumerable<QueuedVideoFrame> ReadAll()
+    {
+        while (true)
+        {
+            QueuedVideoFrame frame;
+            lock (_sync)
+            {
+                while (!TryDequeue(out frame))
+                {
+                    if (_completed) yield break;
+                    Monitor.Wait(_sync);
+                }
+            }
+            yield return frame;
         }
     }
 
@@ -123,6 +142,7 @@ public sealed class CompressedVideoQueue
         {
             _completed = true;
             _signal.Writer.TryComplete();
+            Monitor.PulseAll(_sync);
         }
     }
 }

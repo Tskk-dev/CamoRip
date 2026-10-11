@@ -19,7 +19,13 @@ public sealed class H264Decoder : IDisposable
     private readonly StringBuilder _statusBuffer = new(512);
     public string BackendStatus { get; private set; } = "not initialized";
 
-    public H264Decoder(bool preferHardware = true) => _preferHardware = preferHardware;
+    private readonly VideoBufferPool? _buffers;
+    // With reuse enabled, event consumers must Retain frames they keep after the callback and Release them when done.
+    public H264Decoder(bool preferHardware = true, bool reuseFrameBuffers = false)
+    {
+        _preferHardware = preferHardware;
+        if (reuseFrameBuffers) _buffers = new();
+    }
     private const int MfNotAccepting = unchecked((int)0xC00D36B0);
     private readonly object _sync = new();
     private IntPtr _handle;
@@ -104,9 +110,14 @@ public sealed class H264Decoder : IDisposable
             if (width is < 1 or > 4096 || height is < 1 or > 2304 || (width & 1) != 0 || (height & 1) != 0 ||
                 length != checked(width * height * 3 / 2) || pointer == IntPtr.Zero)
                 throw new InvalidDataException("The H.264 decoder returned an invalid frame.");
-            var data = new byte[length];
-            Marshal.Copy(pointer, data, 0, length);
-            FrameDecoded?.Invoke(this, new DecodedFrame(width, height, timestamp, data));
+            var data = _buffers?.Rent(length) ?? new byte[length];
+            var frame = new DecodedFrame(width, height, timestamp, data, _buffers is null ? null : _buffers.Return);
+            try
+            {
+                Marshal.Copy(pointer, data, 0, length);
+                FrameDecoded?.Invoke(this, frame);
+            }
+            finally { frame.Release(); }
         }
         throw new InvalidDataException("The H.264 decoder produced too many frames for one access unit.");
     }
@@ -166,6 +177,8 @@ public sealed class H264Decoder : IDisposable
 
 public sealed class DecodedFrame
 {
+    private readonly Action<byte[]>? _returnBuffer;
+    private int _references = 1;
     public int Width { get; }
     public int Height { get; }
     public long PtsUs { get; }
@@ -173,5 +186,31 @@ public sealed class DecodedFrame
     public byte[] Data { get; }
     public DecodedFrame(int width, int height, long ptsUs, byte[] data)
     { Width = width; Height = height; PtsUs = ptsUs; Data = data; }
+    internal DecodedFrame(int width, int height, long ptsUs, byte[] data, Action<byte[]>? returnBuffer)
+        : this(width, height, ptsUs, data) => _returnBuffer = returnBuffer;
+
+    public DecodedFrame Retain()
+    {
+        if (_returnBuffer is null) return this;
+        while (true)
+        {
+            var references = Volatile.Read(ref _references);
+            ObjectDisposedException.ThrowIf(references == 0, this);
+            if (Interlocked.CompareExchange(ref _references, checked(references + 1), references) == references) return this;
+        }
+    }
+
+    public void Release()
+    {
+        if (_returnBuffer is null) return;
+        while (true)
+        {
+            var references = Volatile.Read(ref _references);
+            if (references == 0) throw new InvalidOperationException("Frame released more than retained.");
+            if (Interlocked.CompareExchange(ref _references, references - 1, references) != references) continue;
+            if (references == 1) _returnBuffer(Data);
+            return;
+        }
+    }
 }
 
