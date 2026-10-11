@@ -73,7 +73,7 @@
     </Border>
     <TextBlock Grid.Row="1" x:Name="PerformanceStatus" Text="Ready when you are" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
     <Expander Grid.Row="2" Header="Connection details" HorizontalAlignment="Stretch">
-     <StackPanel Spacing="8"><TextBlock x:Name="Diagnostic" TextWrapping="Wrap" IsTextSelectionEnabled="True" /><TextBlock x:Name="CameraStatus" TextWrapping="Wrap" /><TextBlock x:Name="DecoderStatus" TextWrapping="Wrap" /></StackPanel>
+     <StackPanel Spacing="8"><TextBlock x:Name="PerformanceDetails" TextWrapping="Wrap" /><TextBlock x:Name="Diagnostic" TextWrapping="Wrap" IsTextSelectionEnabled="True" /><TextBlock x:Name="CameraStatus" TextWrapping="Wrap" /><TextBlock x:Name="DecoderStatus" TextWrapping="Wrap" /></StackPanel>
     </Expander>
    </Grid>
   </NavigationView>

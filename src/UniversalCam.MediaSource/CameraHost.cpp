@@ -24,6 +24,16 @@ struct CameraHost {
             hr = MFStartup(MF_VERSION);
             mfInitialized = SUCCEEDED(hr);
         }
+        // Retire the previous display-name identity before publishing the renamed camera.
+        // This runs as the same user as the companion, after its single-instance lock.
+        if (SUCCEEDED(hr)) {
+            ComPtr<IMFVirtualCamera> legacy;
+            if (SUCCEEDED(MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource,
+                MFVirtualCameraLifetime_Session, MFVirtualCameraAccess_CurrentUser,
+                L"USB iPhone Camera", UniversalCamClsid, nullptr, 0, &legacy))) {
+                legacy->Remove(); legacy->Shutdown();
+            }
+        }
         if (SUCCEEDED(hr)) hr = MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource,
             MFVirtualCameraLifetime_Session, MFVirtualCameraAccess_CurrentUser,
             L"CamoRip", UniversalCamClsid, nullptr, 0, &camera);

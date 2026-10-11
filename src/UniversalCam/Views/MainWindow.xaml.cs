@@ -84,6 +84,7 @@ public sealed partial class MainWindow : Window
         StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected;
         StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
         if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }
+        UpdateEnabled();
         UpdatePreviewVisibility();
     }
     private void UpdatePreviewVisibility()

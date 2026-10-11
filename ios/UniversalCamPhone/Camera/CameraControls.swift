@@ -47,6 +47,7 @@ extension CameraSession {
             "auto_exposure": d.exposureMode == .custom || d.exposureMode == .locked ? 0 : 1,
             "auto_focus": d.focusMode == .locked ? 0 : 1,
             "auto_white_balance": d.whiteBalanceMode == .locked ? 0 : 1]
+        state.values = state.values.filter { $0.value.isFinite }
         return state
     }
     func applyControls(_ request: CameraControlRequest, allowTorch: Bool,
@@ -61,15 +62,7 @@ extension CameraSession {
                 finish("Camera changed. Wait for updated controls."); return
             }
             let snapshot = self.controlSnapshot()
-            let flags: Set<String> = ["auto_exposure", "auto_focus", "auto_white_balance", "torch_on", "reset"]
-            for (key, value) in request.values {
-                guard value.isFinite else { finish("Invalid camera value."); return }
-                if flags.contains(key) {
-                    guard value == 0 || value == 1 else { finish("Invalid camera mode."); return }
-                } else if let range = snapshot.ranges[key] {
-                    guard value >= range.min && value <= range.max else { finish("\(key) is outside the camera's range."); return }
-                } else { finish("\(key) is unavailable on this camera."); return }
-            }
+            if let error = snapshot.validationError(for: request) { finish(error); return }
             let v = request.values
             let reset = v["reset"] == 1
             let autoExposure = reset ? true : (v["auto_exposure"].map { $0 == 1 } ?? (d.exposureMode != .custom))
@@ -94,7 +87,7 @@ extension CameraSession {
                         d.setExposureModeCustom(duration: CMTime(seconds: duration/1000, preferredTimescale: 1_000_000), iso: iso) { _ in group.leave() }
                     }
                 }
-                if reset || v["exposure_bias"] != nil {
+                if (reset || v["exposure_bias"] != nil), snapshot.ranges["exposure_bias"] != nil {
                     group.enter(); d.setExposureTargetBias(Float(reset ? 0 : v["exposure_bias"]!)) { _ in group.leave() }
                 }
                 if reset || v["auto_focus"] != nil || v["focus"] != nil {

@@ -20,4 +20,21 @@ final class CameraControlProtocolTests: XCTestCase {
         XCTAssertEqual(round.ranges["iso"]?.max, 1600)
         XCTAssertEqual(round.values["iso"], 100)
     }
+
+    func testCameraMismatchAndUnknownControlsAreRejected() {
+        var state = CameraControlState(); state.camera_id = "rear"
+        XCTAssertNotNil(state.validationError(for: .init(request_id: 1, camera_id: "front", values: [:])))
+        XCTAssertNotNil(state.validationError(for: .init(request_id: 1, camera_id: "rear", values: ["contrast": 2])))
+    }
+    func testNonfiniteAndInvalidModesAreRejected() {
+        var state = CameraControlState(); state.camera_id = "rear"
+        XCTAssertNotNil(state.validationError(for: .init(request_id: 1, camera_id: "rear", values: ["auto_focus": 0.5])))
+        XCTAssertNotNil(state.validationError(for: .init(request_id: 1, camera_id: "rear", values: ["focus": .nan])))
+    }
+    func testActiveFrameExposureBoundsAreEnforced() {
+        var state = CameraControlState(); state.camera_id = "rear"
+        state.ranges["shutter_ms"] = .init(min: 0.1, max: 1000/60)
+        XCTAssertNotNil(state.validationError(for: .init(request_id: 1, camera_id: "rear", values: ["shutter_ms": 33])))
+        XCTAssertNil(state.validationError(for: .init(request_id: 1, camera_id: "rear", values: ["shutter_ms": 8])))
+    }
 }

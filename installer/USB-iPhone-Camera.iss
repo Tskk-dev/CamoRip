@@ -22,6 +22,7 @@ OutputBaseFilename=CamoRip-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+AppMutex=Local\UniversalCam_USB_SingleInstance
 CloseApplications=yes
 RestartApplications=no
 LicenseFile=..\LICENSE

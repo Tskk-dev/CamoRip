@@ -294,7 +294,11 @@ internal sealed class StreamingService : IAsyncDisposable
         }
         if (!_connection.IsStreaming) return;
         var message = $"Pipeline fps: USB {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · preview {previewFps:F1} · queue drops {drops}";
-        Ui(() => SetStatus("PerformanceStatus", message));
+        Ui(() =>
+        {
+            SetStatus("PerformanceStatus", $"{cameraFps:F0} fps · USB · {Volatile.Read(ref _decodedWidth)} × {Volatile.Read(ref _decodedHeight)}");
+            SetStatus("PerformanceDetails", message);
+        });
         App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB; allocation={allocationRate:F1}MiB/s GC0/1/2={string.Join("/", collections)}");
     }
 

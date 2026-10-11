@@ -1,8 +1,14 @@
-# USB iPhone Camera
+# CamoRip
 
-Use an iPhone 6s Plus as a Windows 11 webcam through a Lightning USB cable. The iPhone app captures camera video with AVFoundation and encodes H.264 with VideoToolbox. The Windows companion reads it through Apple's local USB device service, decodes it with Windows Media Foundation, and exposes **USB iPhone Camera** to camera apps using the Windows 11 virtual camera API.
+Use an iPhone 6s Plus as a Windows 11 webcam through a Lightning USB cable. The iPhone app captures camera video with AVFoundation and encodes H.264 with VideoToolbox. The Windows companion reads it through Apple's local USB device service, decodes it with Windows Media Foundation, and exposes **CamoRip** to camera apps using the Windows 11 virtual camera API.
 
 Video stays on the iPhone, USB cable, and Windows PC. The phone listens on loopback only; the Windows client selects USB-connected devices. No external video server or account is used by this app. The meeting application you choose controls what happens to its webcam input.
+
+## Desktop controls
+
+CamoRip uses a native WinUI 3 sidebar for camera, exposure/focus/white balance, torch, preview and settings. Camera adjustments run on the iPhone and are controlled over USB. Preview supports 60/30/15 fps or Off, fit/fill, mirroring and fullscreen. Close to the Windows system tray to keep the webcam running; diagnostic logging can be disabled in Settings. Update both companions for camera controls.
+
+See [CamoRip architecture and validation status](docs/CAMORIP.md).
 
 ## Requirements
 
@@ -15,11 +21,11 @@ The main target is rear camera 1920×1080 at 60 fps. The app reports the actual 
 
 ## Install and use
 
-1. Open this repository's **Actions → Build webcam apps**, select a successful run, and download `usb-iphone-camera-windows-x64` and `usb-iphone-camera-ios-unsigned`.
+1. Open this repository's **Actions → Build webcam apps**, select a successful run, and download `camorip-windows-x64` and `camorip-ios-unsigned`.
 2. Run the Windows setup executable. Administrator access registers the Media Foundation camera source; run the installed companion normally afterward.
 3. Sign/install the unsigned IPA with your confirmed iPhone install route. Keep the app open and allow Camera access.
 4. Connect the cable, unlock the iPhone, and accept **Trust This Computer**. Open both companions.
-5. Use Start/Stop and Switch camera on either companion. Select **USB iPhone Camera** in your meeting application's camera settings.
+5. Use Start/Stop and Switch camera on either companion. Select **CamoRip** in your meeting application's camera settings.
 
 See [installation details](docs/INSTALLATION.md), [architecture](docs/ARCHITECTURE.md), [upstream audit](docs/UPSTREAM_AUDIT.md), and the [device validation checklist](docs/VALIDATION.md).
 
@@ -38,7 +44,7 @@ Windows also logs `stage avg/max(count)` in milliseconds for decoder Feed,
 camera-channel writes, and preview conversion. At 60 fps, decoding or publishing
 consistently taking more than 16.7 ms cannot keep up. Camera and preview have independent
 workers with one latest decoded frame each; coalesced preview frames are expected
-because the preview runs at about 15 fps. `virtual camera` counts successful
+when preview refresh is slower than capture. The new WinUI preview defaults to 60 fps and can be limited or turned off. `virtual camera` counts successful
 channel writes, not frames consumed by a meeting app.
 
 The compressed queue is limited to 64 frames, 16 MiB and 500 ms of queued age.
