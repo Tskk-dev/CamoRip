@@ -13,7 +13,7 @@ try {
     if ($LASTEXITCODE) { throw 'Native camera build failed.' }
     ctest --test-dir artifacts/native -C $Configuration --output-on-failure
     if ($LASTEXITCODE) { throw 'Native camera source smoke test failed.' }
-    dotnet test tests/UniversalCam.Tests/UniversalCam.Tests.csproj -c $Configuration -p:Platform=x64 --logger trx --results-directory artifacts/tests
+    dotnet test tests/UniversalCam.Tests/UniversalCam.Tests.csproj -c $Configuration -p:Platform=x64 --logger trx --logger "console;verbosity=normal" --results-directory artifacts/tests --blame-hang-timeout 5m
     if ($LASTEXITCODE) { throw 'Windows tests failed.' }
     dotnet publish src/UniversalCam/UniversalCam.csproj -c $Configuration -r win-x64 --self-contained true -p:PublishSingleFile=false -o artifacts/windows
     if ($LASTEXITCODE) { throw 'Windows application publish failed.' }
@@ -23,3 +23,4 @@ try {
     Copy-Item -LiteralPath src/UniversalCam.MediaSource/MICROSOFT-LICENSE.txt -Destination artifacts/windows
     Copy-Item -LiteralPath docs -Destination artifacts/windows -Recurse -Force
 } finally { Pop-Location }
+

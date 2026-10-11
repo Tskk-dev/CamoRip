@@ -131,6 +131,7 @@ final class USBTransport {
             guard self.videoSendsInFlight < Self.maxVideoSendsInFlight else {
                 // A dropped H.264 reference frame invalidates following delta frames.
                 self.waitingForKeyframe = true
+                DiagnosticLog.record(.usbBackpressure)
                 self.onVideoBackpressure?()
                 return
             }
@@ -142,6 +143,7 @@ final class USBTransport {
                 guard let self, let connection, self.connection === connection else { return }
                 self.videoSendsInFlight = max(0, self.videoSendsInFlight - 1)
                 if error != nil { connection.cancel() }
+                else { DiagnosticLog.record(.usbSent) }
             })
         }
     }

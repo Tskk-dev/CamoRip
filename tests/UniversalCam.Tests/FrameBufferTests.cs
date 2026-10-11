@@ -107,7 +107,11 @@ public class FrameBufferTests
     public async Task FrameBuffer_ConcurrentProducerConsumer_IsThreadSafe()
     {
         // Arrange
-        var buffer = new FrameBuffer(capacity: 10);
+        // This test verifies thread safety without testing the intentional
+        // drop-oldest behavior (covered separately by OverCapacity_DropsOldest).
+        // Leave enough room for every produced frame so the consumer cannot
+        // wait forever for frames the bounded queue deliberately discarded.
+        var buffer = new FrameBuffer(capacity: 128);
         var frames = new List<long>();
         var errors = new List<string>();
 
@@ -174,10 +178,11 @@ public class FrameBufferTests
     {
         return new NV12Frame
         {
-            Width = 1920,
-            Height = 1080,
+            Width = 2,
+            Height = 2,
             PtsUs = pts,
-            Data = new byte[1920 * 1080 * 3 / 2]
+            Data = new byte[2 * 2 * 3 / 2]
         };
     }
 }
+

@@ -99,14 +99,20 @@ extern "C" HRESULT __stdcall UCamWriteFrame(void* context, const BYTE* nv12, DWO
 
 extern "C" void __stdcall UCamCloseWriter(void* context) { delete static_cast<Writer*>(context); }
 
-FrameReader::~FrameReader() {
+FrameReader::~FrameReader() { CloseMapping(); }
+
+void FrameReader::CloseMapping() {
     if (header_) UnmapViewOfFile(header_);
     if (mapping_) CloseHandle(mapping_);
     if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+    header_ = nullptr;
+    mapping_ = nullptr;
+    file_ = INVALID_HANDLE_VALUE;
+    cachedTick_ = 0;
+    cachedSequence_ = -1;
 }
 
-bool FrameReader::Open() {
-    const auto now = GetTickCount64();
+bool FrameReader::Open(ULONGLONG now) {
     if (path_.empty() || (lastOpenAttempt_ && now - lastOpenAttempt_ < 1000)) return false;
     lastOpenAttempt_ = now;
     file_ = CreateFileW(path_.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -124,21 +130,43 @@ bool FrameReader::Open() {
     return true;
 }
 
-bool FrameReader::Read(BYTE* destination) {
-    if (!header_ && !Open()) return false;
+bool FrameReader::Repeat(BYTE* destination, ULONGLONG now) {
+    if (!cachedTick_ || (now >= cachedTick_ && now - cachedTick_ > FrameHoldMs)) return false;
+    std::memcpy(destination, cached_.data(), FrameBytes);
+    return true;
+}
+
+bool FrameReader::Read(BYTE* destination, ULONGLONG now) {
+    if (!destination || (!header_ && !Open(now))) return false;
     if (header_->magic != ChannelMagic || header_->version != 1 || header_->width != FrameWidth || header_->height != FrameHeight || header_->bytes != FrameBytes) return false;
+    // A closed writer invalidates the cache immediately. Release this mapping
+    // so a restarted companion can create a new file at the same path.
+    const auto publishedTick = static_cast<ULONGLONG>(header_->updatedTick);
+    if (!publishedTick) { CloseMapping(); return false; }
+    if (now >= publishedTick && now - publishedTick > FrameHoldMs) { cachedTick_ = 0; return false; }
+    try { if (cached_.empty()) cached_.resize(FrameBytes); }
+    catch (const std::bad_alloc&) { return false; }
     for (int retry = 0; retry != 3; ++retry) {
         // Aligned volatile reads are atomic on x64. Interlocked would require a writable view.
         const auto before = header_->sequence;
         MemoryBarrier();
-        if (before & 1) continue;
+        if (before & 1) return Repeat(destination, now);
         const auto tick = header_->updatedTick;
         const DWORD slot = header_->slot;
-        if (!tick || slot > 1 || GetTickCount64() - static_cast<ULONGLONG>(tick) > 1500) return false;
+        if (!tick) { CloseMapping(); return false; }
+        if (slot > 1 || (now >= static_cast<ULONGLONG>(tick) && now - static_cast<ULONGLONG>(tick) > FrameHoldMs)) { cachedTick_ = 0; return false; }
+        if (before == cachedSequence_) return Repeat(destination, now);
         std::memcpy(destination, reinterpret_cast<const BYTE*>(header_) + sizeof(ChannelHeader) + slot * FrameBytes, FrameBytes);
         MemoryBarrier();
-        if (before == header_->sequence) return true;
+        if (before == header_->sequence) {
+            std::memcpy(cached_.data(), destination, FrameBytes);
+            cachedTick_ = static_cast<ULONGLONG>(tick);
+            cachedSequence_ = before;
+            return true;
+        }
     }
-    return false;
+    // The destination may contain a torn copy after a collision. Restore only
+    // a previously verified complete frame, never return the partial image.
+    return Repeat(destination, now);
 }
 

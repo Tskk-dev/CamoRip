@@ -23,6 +23,58 @@ The main target is rear camera 1920×1080 at 60 fps. The app reports the actual 
 
 See [installation details](docs/INSTALLATION.md), [architecture](docs/ARCHITECTURE.md), [upstream audit](docs/UPSTREAM_AUDIT.md), and the [device validation checklist](docs/VALIDATION.md).
 
+## Slow video diagnostics
+
+Leave streaming for 10 seconds and compare the iPhone stage counts in
+`Files > On My iPhone > UniversalCam > UniversalCam.log` with the Windows
+`Pipeline fps` line. The Windows log is at
+`%LOCALAPPDATA%\UniversalCam\Logs\latest.log`; use **Open diagnostic logs** in
+the companion window to open its folder. `captured` versus `encoded` identifies
+phone capture/encoder loss, `encoded` versus `usbSent` identifies USB send
+backpressure, and Windows `USB` versus `decoded` versus `virtual camera` narrows
+down the PC-side stage. Include both logs when reporting a stall.
+
+Windows also logs `stage avg/max(count)` in milliseconds for decoder Feed,
+camera-channel writes, and preview conversion. At 60 fps, decoding or publishing
+consistently taking more than 16.7 ms cannot keep up. Camera and preview have independent
+workers with one latest decoded frame each; coalesced preview frames are expected
+because the preview runs at about 15 fps. `virtual camera` counts successful
+channel writes, not frames consumed by a meeting app.
+
+The compressed queue is limited to 64 frames, 16 MiB and 500 ms of queued age.
+An overflow discards the broken H.264 dependency chain once and waits for a fresh
+keyframe; `recoveries`, `waitingIDR`, queue age, last-frame ages and CPU/memory
+help identify the cause. Metrics run independently of the UI. Restarting the
+companion preserves the preceding run as `previous.log`; unhandled managed
+exceptions and normal shutdowns are logged too. PC pipeline changes do not
+require reinstalling the phone app.
+
+The camera source caches the last complete frame and repeats it during shared
+buffer collisions or brief decoder recovery, for up to 2.5 seconds. It never
+returns a partial copy after a collision. Explicit stop/disconnect publishes the
+neutral frame immediately, and closing the publisher invalidates the cache.
+The queue limits absorb brief bursts without deliberately delaying playback;
+they cannot compensate for sustained decoding slower than the capture rate.
+
+The decoder honors the Media Foundation display aperture: a padded 1920x1088
+H.264 surface is copied as its valid 1920x1080 image, including the correct UV
+plane offset. This keeps normal 1080p publishing on the NV12 passthrough path
+instead of running a full-frame scalar resize.
+
+Windows now prefers D3D11 hardware H.264 decoding on the default graphics
+adapter. The companion shows **GPU accelerated** only after receiving a decoded
+DXGI texture; requesting acceleration alone is not counted as confirmation.
+NV12 textures are copied through a reusable staging texture into the existing
+camera channel, preserving the display aperture and physical UV-plane offset.
+This is hardware decoding with CPU readback, not an entirely GPU-resident path.
+If GPU initialization, format negotiation or readback fails, decoding falls back
+to software and waits for a keyframe when needed. The backend, adapter and
+fallback HRESULT are written to the Windows log. Hosted CI validates software
+fallback. On the target Vega 10 PC, all 72 tests passed with GPU output required
+for the encoded-pattern regression, including 720p-to-1080p switching and pixel
+comparison against software decoding. Sustained USB/meeting-app throughput
+still needs a physical streaming retest.
+
 ## Build
 
 Windows needs Visual Studio 2022 C++ tools, a Windows 11 SDK, CMake, .NET SDK 8 or newer, and Inno Setup 6 for installer packaging. From a Developer PowerShell:

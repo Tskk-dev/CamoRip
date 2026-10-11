@@ -26,11 +26,15 @@ final class ConnectionManager: ObservableObject {
     private var operationGeneration = 0
     private var bitrate = 8_000_000
     private var pingTimer: Timer?
+    private var metricsTimer: Timer?
+    private let streamingLock = NSLock()
+    private var streamingForCapture = false
     private var lastPong = Date()
     private var backgroundObserver: NSObjectProtocol?
 
     init() {
         transport.onStateChange = { [weak self] state in
+            DiagnosticLog.write("USB state: \(String(describing: state))")
             DispatchQueue.main.async { self?.transportChanged(state) }
         }
         transport.onControlMessage = { [weak self] data in
@@ -38,12 +42,14 @@ final class ConnectionManager: ObservableObject {
         }
         transport.onVideoBackpressure = { [weak self] in self?.encoder.requestKeyframe() }
         encoder.onEncodedFrame = { [weak self] frame in
-            DispatchQueue.main.async {
-                guard let self, self.state == .streaming else { return }
-                self.transport.sendVideoFrame(frame)
-            }
+            guard let self else { return }
+            self.streamingLock.lock()
+            let isStreaming = self.streamingForCapture
+            self.streamingLock.unlock()
+            if isStreaming { self.transport.sendVideoFrame(frame) }
         }
         encoder.onError = { [weak self] error in
+            DiagnosticLog.write("Encoder error: \(error.localizedDescription)")
             DispatchQueue.main.async { self?.fail(code: "encoder_failed", message: error.localizedDescription) }
         }
         backgroundObserver = NotificationCenter.default.addObserver(
@@ -55,6 +61,7 @@ final class ConnectionManager: ObservableObject {
 
     deinit {
         pingTimer?.invalidate()
+        metricsTimer?.invalidate()
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     }
 
@@ -91,8 +98,12 @@ final class ConnectionManager: ObservableObject {
         }
         cameraSession?.start()
         encoder.requestKeyframe()
+        streamingLock.lock(); streamingForCapture = true; streamingLock.unlock()
         UIApplication.shared.isIdleTimerDisabled = true
         state = .streaming
+        DiagnosticLog.write("Stream started: \(formatLabel), bitrate=\(bitrate)")
+        _ = DiagnosticLog.takeMetrics() // Exclude camera preview frames captured before streaming.
+        startMetricsLogging()
         if notifyPeer { transport.sendControl(.startStream) }
     }
 
@@ -100,18 +111,22 @@ final class ConnectionManager: ObservableObject {
         startRequested = false
         pendingStartNotifiesPeer = false
         wantsStreaming = false
+        streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         // Stop accepting raw frames before flushing the old compression session.
         if activeTransport == .usb { state = .connected }
         UIApplication.shared.isIdleTimerDisabled = false
         encoder.flush()
+        metricsTimer?.invalidate()
+        metricsTimer = nil
+        DiagnosticLog.write("Stream stopped")
         if notifyPeer { transport.sendControl(.stopStream) }
     }
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.state == .streaming else { return }
-            self.encoder.encode(sample)
-        }
+        streamingLock.lock()
+        let isStreaming = streamingForCapture
+        streamingLock.unlock()
+        if isStreaming { encoder.encode(sample) }
     }
 
     func cameraFailed(_ message: String) { fail(code: "camera_unavailable", message: message) }
@@ -179,11 +194,15 @@ final class ConnectionManager: ObservableObject {
         startRequested = false
         pendingStartNotifiesPeer = false
         wantsStreaming = false
+        streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         UIApplication.shared.isIdleTimerDisabled = false
         encoder.invalidate()
         pingTimer?.invalidate()
         pingTimer = nil
         latencyMs = 0
+        metricsTimer?.invalidate()
+        metricsTimer = nil
+        DiagnosticLog.write("USB session reset")
     }
 
     private func receive(_ data: Data) {
@@ -252,6 +271,14 @@ final class ConnectionManager: ObservableObject {
     private func prepareEncoder(_ config: CaptureConfiguration) {
         encoder.prepare(width: config.width, height: config.height, fps: config.fps, bitrate: bitrate)
         formatLabel = "\(config.width) × \(config.height) · \(config.fps) fps"
+        DiagnosticLog.write("Capture configured: \(config.width)x\(config.height) @ \(config.fps) fps")
+    }
+
+    private func startMetricsLogging() {
+        metricsTimer?.invalidate()
+        metricsTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            DiagnosticLog.write("METRIC " + DiagnosticLog.takeMetrics())
+        }
     }
 
     private func sendCameras() {
@@ -265,6 +292,7 @@ final class ConnectionManager: ObservableObject {
         operationGeneration += 1
         configuring = false
         stopStreaming(notifyPeer: false)
+        DiagnosticLog.write("Error [\(code)]: \(message)")
         state = .error(message)
         transport.sendControl(.error(code: code, message: message))
     }

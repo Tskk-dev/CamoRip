@@ -19,6 +19,9 @@ The app protocol multiplexes newline-delimited UTF-8 JSON control messages and l
 
 Windows uses its built-in H.264 decoder MFT. The companion publishes frames to a bounded, per-user file mapping. The camera source is activated by CLSID in the Windows camera infrastructure; it does not use the old upstream live-object P/Invoke. Frame storage grants the current user and the required Windows service identities access, and is cleared when the publisher closes. Treat active-session temporary storage as video data; runtime validation must confirm cleanup and service activation.
 
+The decoder keeps the MFT's NV12 output packed and sends it directly to the camera channel when the phone supplies 1080p. This avoids converting each full-resolution frame to BGRA and back to NV12. Only lower-resolution formats are scaled. The desktop preview is a separate 640×360 BGRA conversion limited to 15 updates per second, so it cannot throttle the webcam stream.
+
 The source produces one NV12 1920×1080 stream at 60 fps with Media Foundation event/sample handling. Lower-resolution or slower phone frames are scaled and repeated to the fixed output; no frontend control implies that the front sensor captures native 1080p60. Stopping, disconnecting, or stale video produces a neutral frame rather than continuing to show a captured image.
 
 The installer registers the x64 source DLL in COM. The companion creates a virtual camera for its current user and session, with the source's CLSID and frame publisher attributes. Registration of the provider and creation of a camera session are distinct operations. Source activation, ACL compatibility with Windows Camera Frame Server, timing, and client compatibility need actual Windows 11 runtime checks.
+

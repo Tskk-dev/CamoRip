@@ -14,6 +14,7 @@ public sealed class VirtualCameraSession : IDisposable
     private bool _enabled = true;
     private bool _streaming;
     private bool _disposed;
+    private byte[]? _resizedFrame;
     public bool IsAvailable { get { lock (_sync) return _server != null; } }
     public string StatusMessage { get; private set; } = "Virtual camera is starting.";
     public event EventHandler<string>? StatusChanged;
@@ -71,23 +72,29 @@ public sealed class VirtualCameraSession : IDisposable
         }
     }
 
-    public void OnFrameDecoded(object? sender, DecodedFrame frame)
+    public void OnFrameDecoded(object? sender, DecodedFrame frame) => TryPublishFrame(frame);
+
+    /// <summary>Returns true only after the frame was written to the camera channel.</summary>
+    public bool TryPublishFrame(DecodedFrame frame)
     {
         lock (_sync)
         {
-            if (_disposed || !_enabled || _server == null || !_streaming) return;
+            if (_disposed || !_enabled || _server == null || !_streaming) return false;
             try
             {
+                var needsResize = frame.Width != SharedMemoryBridge.Width || frame.Height != SharedMemoryBridge.Height;
+                if (needsResize) _resizedFrame ??= new byte[SharedMemoryBridge.Width * SharedMemoryBridge.Height * 3 / 2];
                 _bridge.WriteFrame(new NV12Frame
                 {
                     Width = SharedMemoryBridge.Width,
                     Height = SharedMemoryBridge.Height,
                     PtsUs = frame.PtsUs,
-                    Data = NV12Converter.ConvertBgra32ToNv12Scaled(frame.Data, frame.Width, frame.Height,
-                        SharedMemoryBridge.Width, SharedMemoryBridge.Height)
+                    Data = NV12Converter.FitNv12(frame.Data, frame.Width, frame.Height,
+                        SharedMemoryBridge.Width, SharedMemoryBridge.Height, needsResize ? _resizedFrame : null)
                 });
+                return true;
             }
-            catch (Exception error) { SetStatus($"Video could not reach the virtual camera: {error.Message}"); }
+            catch (Exception error) { SetStatus($"Video could not reach the virtual camera: {error.Message}"); return false; }
         }
     }
 
@@ -131,4 +138,5 @@ public sealed class VirtualCameraSession : IDisposable
         }
     }
 }
+
 

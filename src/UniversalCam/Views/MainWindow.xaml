@@ -25,6 +25,8 @@
             <StackPanel VerticalAlignment="Center">
                 <TextBlock x:Name="DeviceStatus" Text="Connecting…" FontSize="16" FontWeight="SemiBold"/>
                 <TextBlock x:Name="VideoStatus" Text="Webcam output: 1920 × 1080 at 60 fps" Foreground="#AEBCCD" Margin="0,4,0,0"/>
+                <TextBlock x:Name="PerformanceStatus" Text="Waiting for video metrics" Foreground="#AEBCCD" Margin="0,4,0,0"/>
+                <TextBlock x:Name="DecoderStatus" Text="Waiting for video decoder" Foreground="#AEBCCD" Margin="0,4,0,0"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="SwitchCamera" Content="Switch camera" IsEnabled="False" Click="OnSwitchCamera"/>
@@ -35,6 +37,7 @@
             <StackPanel>
                 <TextBlock x:Name="CameraStatus" Text="Preparing Windows webcam…" TextWrapping="Wrap"/>
                 <TextBlock x:Name="Diagnostic" Foreground="#B8C7D9" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                <Button Content="Open diagnostic logs" HorizontalAlignment="Left" Margin="0,10,0,0" Click="OnOpenLogs"/>
                 <TextBlock Text="In your meeting app, select USB iPhone Camera. Keep the iPhone app open while streaming."
                            Foreground="#B8C7D9" Margin="0,8,0,0" TextWrapping="Wrap"/>
             </StackPanel>

@@ -18,6 +18,9 @@ struct alignas(64) ChannelHeader {
 static_assert(sizeof(ChannelHeader) == 64);
 inline constexpr DWORD ChannelMagic = 0x4D414355; // UCAM
 inline constexpr size_t ChannelBytes = sizeof(ChannelHeader) + 2ull * FrameBytes;
+// Covers the phone's two-second IDR interval plus scheduling jitter. Explicit
+// stop/disconnect still publishes a neutral frame immediately; close sets tick=0.
+inline constexpr ULONGLONG FrameHoldMs = 2500;
 
 class FrameReader {
     HANDLE file_ = INVALID_HANDLE_VALUE;
@@ -25,11 +28,16 @@ class FrameReader {
     const ChannelHeader* header_ = nullptr;
     std::wstring path_;
     ULONGLONG lastOpenAttempt_ = 0;
+    std::vector<BYTE> cached_;
+    ULONGLONG cachedTick_ = 0;
+    LONG64 cachedSequence_ = -1;
 public:
     ~FrameReader();
     void SetPath(std::wstring path) { path_ = std::move(path); }
-    bool Read(BYTE* destination);
+    bool Read(BYTE* destination, ULONGLONG now = GetTickCount64());
 private:
-    bool Open();
+    bool Open(ULONGLONG now);
+    void CloseMapping();
+    bool Repeat(BYTE* destination, ULONGLONG now);
 };
 
