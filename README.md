@@ -5,7 +5,7 @@ Use an iPhone 6s Plus as a Windows 11 webcam through a Lightning USB cable. The 
 I made this app because 
 # FUCK CAMO STUDIO AND EVERY SINGLE FUCKING APP THAT NEEDS PAYMENT FOR THIS SHIT LOL I WILL NOT PAY FOR YOUR SHIT. 
 
-# NO SUPPORT WILL BE PROVIDED FOR THIS SHIT YOU GET CODE AND CODE ONLY DO WITH THAT HOW YOU WILL I WILL NOT HELP ANYONE SET THIS UP. 
+https://ko-fi.com/tskkkdev
 
 ## Requirements
 
