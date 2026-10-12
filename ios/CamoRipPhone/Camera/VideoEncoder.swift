@@ -168,9 +168,9 @@ final class VideoEncoder {
     private static let output: VTCompressionOutputCallback = { reference, _, status, flags, sample in
         guard let reference else { return }
         let owner = Unmanaged<VideoEncoder>.fromOpaque(reference).takeUnretainedValue()
-        guard status == noErr else { owner.onError?(Self.error(status)); return }
+        guard status == noErr else { owner.onError?(VideoEncoder.error(status)); return }
         guard !flags.contains(.frameDropped), let sample, CMSampleBufferDataIsReady(sample),
-              let frame = Self.packet(sample) else { return }
+              let frame = VideoEncoder.packet(sample) else { return }
         DiagnosticLog.record(.encoded)
         owner.onEncodedFrame?(frame)
     }
