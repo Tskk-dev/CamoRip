@@ -211,10 +211,13 @@ final class VideoEncoder {
             return
         }
         self.session = s
-        var hardware: CFTypeRef?
-        let hardwareStatus = VTSessionCopyProperty(s, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-            allocator: nil, valueOut: &hardware)
-        let hardwareLabel = (hardware as? Bool).map { $0 ? "true" : "false" } ?? "unknown (status \(hardwareStatus))"
+        var hardwareLabel = "unavailable to query before iOS 17.4"
+        if #available(iOS 17.4, *) {
+            var hardware: CFTypeRef?
+            let hardwareStatus = VTSessionCopyProperty(s, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+                allocator: nil, valueOut: &hardware)
+            hardwareLabel = (hardware as? Bool).map { $0 ? "true" : "false" } ?? "unknown (status \(hardwareStatus))"
+        }
         DiagnosticLog.write("Encoder ready: H.264 High \(width)x\(height) @ \(fps), target=\(bitrate), hardware=\(hardwareLabel), maxFrameDelay=\(boundedDelay ? "1" : "default"), delayPropertyStatus=\(delayStatus)")
     }
 }
