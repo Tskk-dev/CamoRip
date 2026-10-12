@@ -34,4 +34,4 @@ Built by [Tskk-dev](https://github.com/Tskk-dev). Support development on [Ko-fi]
 
 ## License
 
-CamoRip is MIT licensed. It includes adapted code from [UniversalCam](https://github.com/Shivinder-s/universal-cam); see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+CamoRip is MIT licensed. It includes adapted code from [UniversalCam](https://github.com/Shivinder-s/universal-cam).
