@@ -44,7 +44,9 @@ final class StreamingSwitchTests: XCTestCase {
         }
         func encode(_ sampleBuffer: CMSampleBuffer) {
             encoded += 1
-            emit()
+            // VideoToolbox delivers output asynchronously. Delivering inline
+            // would reenter the coordinator while its raw-frame gate is locked.
+            DispatchQueue.main.async { self.emit() }
         }
         func emit() {
             onEncodedFrame?(.init(data: Data([0, 0, 0, 1, 0x65]),
@@ -166,6 +168,7 @@ final class StreamingSwitchTests: XCTestCase {
             XCTAssertTrue(rig.phone.wantsStreaming)
             XCTAssertEqual(rig.camera.currentCameraID, index % 2 == 0 ? "front" : "rear")
             rig.phone.handleVideoSample(frame)
+            await settle()
             XCTAssertEqual(rig.pc.frames.count, index + 1)
             XCTAssertTrue(rig.pc.frames.last!.isKeyframe)
         }
@@ -191,6 +194,7 @@ final class StreamingSwitchTests: XCTestCase {
         XCTAssertFalse(rig.pc.controls.contains { $0.type == "switch_camera_ack" })
         rig.encoder.preparations.removeFirst()(true)
         rig.phone.handleVideoSample(frame)
+        await settle()
         XCTAssertEqual(rig.pc.frames.count, 1)
         XCTAssertEqual(rig.trace.events.filter { $0 == "start" }.count, 1)
         let drain = try XCTUnwrap(rig.trace.events.firstIndex(of: "drain"))
@@ -231,6 +235,7 @@ final class StreamingSwitchTests: XCTestCase {
         try rig.pc.send(.configure(resolution: "1920x1080", fps: 60, codec: "h264", bitrate: 12_000_000))
         await settle(); try rig.pc.send(.startStream); await settle()
         rig.phone.handleVideoSample(try sample())
+        await settle()
         XCTAssertEqual(rig.phone.state, .streaming); XCTAssertEqual(rig.pc.frames.count, 1)
     }
 
