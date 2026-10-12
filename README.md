@@ -30,7 +30,8 @@ See the [installation guide](docs/INSTALLATION.md) and [wireless pairing guide](
 
 ## About
 
-Built by [Tskk-dev](https://github.com/Tskk-dev). Support development on [Ko-fi](https://ko-fi.com/tskkkdev).
+Built by [Tskk-dev](https://github.com/Tskk-dev). 
+Support development on [Ko-fi](https://ko-fi.com/tskkkdev).
 
 ## License
 
