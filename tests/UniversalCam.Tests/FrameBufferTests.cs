@@ -7,7 +7,6 @@ public class FrameBufferTests
     [Fact]
     public void FrameBuffer_Enqueue_Dequeue_RoundTrip()
     {
-        // Arrange
         var buffer = new FrameBuffer(capacity: 4);
         var frame = new NV12Frame
         {
@@ -16,12 +15,8 @@ public class FrameBufferTests
             PtsUs = 12345,
             Data = new byte[1920 * 1080 * 3 / 2]
         };
-
-        // Act
         buffer.Enqueue(frame);
         bool dequeued = buffer.TryDequeue(out var result);
-
-        // Assert
         Assert.True(dequeued);
         Assert.Equal(frame.Width, result.Width);
         Assert.Equal(frame.Height, result.Height);
@@ -31,31 +26,21 @@ public class FrameBufferTests
     [Fact]
     public void FrameBuffer_EmptyBuffer_TryDequeueReturnsFalse()
     {
-        // Arrange
         var buffer = new FrameBuffer(capacity: 4);
-
-        // Act
         bool dequeued = buffer.TryDequeue(out var result);
-
-        // Assert
         Assert.False(dequeued);
     }
 
     [Fact]
     public void FrameBuffer_OverCapacity_DropsOldest()
     {
-        // Arrange
         var buffer = new FrameBuffer(capacity: 2);
         var frame1 = CreateFrame(pts: 100);
         var frame2 = CreateFrame(pts: 200);
         var frame3 = CreateFrame(pts: 300);
-
-        // Act
         buffer.Enqueue(frame1);
         buffer.Enqueue(frame2);
         buffer.Enqueue(frame3);  // Should drop frame1
-
-        // Assert: Should have frame2 and frame3
         Assert.True(buffer.TryDequeue(out var result1));
         Assert.Equal(200, result1.PtsUs);
 
@@ -68,11 +53,8 @@ public class FrameBufferTests
     [Fact]
     public void FrameBuffer_FillAndEmpty_Fifo()
     {
-        // Arrange
         var buffer = new FrameBuffer(capacity: 3);
         var frames = new[] { CreateFrame(100), CreateFrame(200), CreateFrame(300) };
-
-        // Act & Assert
         foreach (var f in frames)
             buffer.Enqueue(f);
 
@@ -90,15 +72,10 @@ public class FrameBufferTests
     [Fact]
     public void FrameBuffer_Clear_RemovesAllFrames()
     {
-        // Arrange
         var buffer = new FrameBuffer(capacity: 4);
         buffer.Enqueue(CreateFrame(100));
         buffer.Enqueue(CreateFrame(200));
-
-        // Act
         buffer.Clear();
-
-        // Assert
         Assert.Equal(0, buffer.Count);
         Assert.False(buffer.TryDequeue(out _));
     }
@@ -106,7 +83,6 @@ public class FrameBufferTests
     [Fact]
     public async Task FrameBuffer_ConcurrentProducerConsumer_IsThreadSafe()
     {
-        // Arrange
         // This test verifies thread safety without testing the intentional
         // drop-oldest behavior (covered separately by OverCapacity_DropsOldest).
         // Leave enough room for every produced frame so the consumer cannot
@@ -114,8 +90,6 @@ public class FrameBufferTests
         var buffer = new FrameBuffer(capacity: 128);
         var frames = new List<long>();
         var errors = new List<string>();
-
-        // Act: Produce frames on one task, consume on another
         var producer = Task.Run(() =>
         {
             try
@@ -161,8 +135,6 @@ public class FrameBufferTests
 
         // Use await instead of blocking Task.WaitAll to satisfy xUnit1031
         await Task.WhenAll(producer, consumer);
-
-        // Assert
         Assert.Empty(errors);
         Assert.Equal(100, frames.Count);
     }
@@ -170,7 +142,6 @@ public class FrameBufferTests
     [Fact]
     public void FrameBuffer_InvalidCapacity_ThrowsArgumentException()
     {
-        // Act & Assert
         Assert.Throws<ArgumentException>(() => new FrameBuffer(capacity: 0));
     }
 

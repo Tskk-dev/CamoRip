@@ -25,4 +25,4 @@ On Windows, **Settings > Forget paired phones** revokes wireless credentials. On
 - Bonjour discovery follows address changes. Rescan if the PC changes networks and discovery is blocked.
 - Use strong Wi-Fi or lower resolution and bitrate to reduce dropped frames.
 
-Version 0.4 supports IPv4 local networks. Simulator and loopback tests do not validate physical Wi-Fi, QR scanning, permission prompts, firewall installation or meeting apps. Those checks require a phone and PC.
+Simulator and loopback checks do not validate physical Wi-Fi, QR scanning, permission prompts, firewall installation or meeting apps. Those checks require a phone and PC.

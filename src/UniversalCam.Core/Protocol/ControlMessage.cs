@@ -14,7 +14,6 @@ public abstract record ControlMessage
     [JsonPropertyName("type")]
     public abstract string Type { get; }
 
-    // ── Serialization ────────────────────────────────────────────────────────
 
     private static readonly JsonSerializerOptions _options = new()
     {
@@ -56,7 +55,6 @@ public abstract record ControlMessage
     }
 }
 
-// ── PC → iPhone ──────────────────────────────────────────────────────────────
 
 /// Sent by PC immediately after the USB tunnel is established.
 public sealed record Welcome : ControlMessage
@@ -97,7 +95,6 @@ public sealed record Ping : ControlMessage
     [JsonPropertyName("ts")] public long Ts { get; init; }
 }
 
-// ── iPhone → PC ──────────────────────────────────────────────────────────────
 
 /// iPhone introduces itself after receiving Welcome.
 public sealed record Hello : ControlMessage
@@ -171,7 +168,6 @@ public sealed record ErrorMessage : ControlMessage
     [JsonPropertyName("message")] public string Message { get; init; } = string.Empty;
 }
 
-// ── Shared types ─────────────────────────────────────────────────────────────
 
 /// Describes a camera on the iPhone. Mirrors CameraInfo in CameraSession.swift.
 public sealed record CameraInfo

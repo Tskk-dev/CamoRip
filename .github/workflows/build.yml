@@ -1,4 +1,4 @@
-name: Build webcam apps
+name: Build CamoRip
 
 on:
   push:
@@ -33,7 +33,7 @@ jobs:
             choco install innosetup --yes --no-progress
             if ($LASTEXITCODE) { throw 'Could not install Inno Setup.' }
           }
-          & $compiler installer/USB-iPhone-Camera.iss
+          & $compiler installer/CamoRip.iss
           if ($LASTEXITCODE) { throw 'Installer compilation failed.' }
       - uses: actions/upload-artifact@v4
         with:
@@ -42,7 +42,7 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-native-decoder-x64
+          name: camorip-native-decoder-x64
           path: artifacts/decoder/Release/UniversalCam.Decoder.dll
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
@@ -58,18 +58,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - profile: legacy
+          - profile: Legacy
             minimum_ios: '15.0'
             minimum_major: 15
             model: any
-            ipa: CamoRip-ios15-unsigned.ipa
-            artifact: camorip-ios-unsigned
-          - profile: iphone16
+            ipa: CamoRip-legacy-unsigned.ipa
+            artifact: camorip-ios-legacy-unsigned
+          - profile: Regular
             minimum_ios: '18.0'
             minimum_major: 18
-            model: iPhone 16
-            ipa: CamoRip-iphone16-ios18-unsigned.ipa
-            artifact: camorip-iphone16-unsigned
+            model: any
+            ipa: CamoRip-regular-unsigned.ipa
+            artifact: camorip-ios-regular-unsigned
     runs-on: macos-15
     timeout-minutes: 25
     steps:
@@ -81,18 +81,18 @@ jobs:
         run: |
           set -euo pipefail
           xcodegen generate
-          xcodebuild -project UniversalCamPhone.xcodeproj \
-            -scheme UniversalCamPhone -configuration Release \
+          xcodebuild -project CamoRip.xcodeproj \
+            -scheme CamoRip -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath ../artifacts/ios \
             IPHONEOS_DEPLOYMENT_TARGET=${{ matrix.minimum_ios }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Package and check unsigned IPA
         run: |
           set -euo pipefail
-          APP=artifacts/ios/Build/Products/Release-iphoneos/UniversalCam.app
+          APP=artifacts/ios/Build/Products/Release-iphoneos/CamoRip.app
           test -d "$APP"
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '${{ matrix.minimum_ios }}'
-          xcrun lipo "$APP/UniversalCam" -verify_arch arm64
+          xcrun lipo "$APP/CamoRip" -verify_arch arm64
           mkdir -p artifacts/ipa/Payload
           cp -R "$APP" artifacts/ipa/Payload/
           (cd artifacts/ipa && zip -qr ../${{ matrix.ipa }} Payload)
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           SIMULATOR=$(python3 ../scripts/select-ios-simulator.py --minimum-ios ${{ matrix.minimum_major }} --model '${{ matrix.model }}')
-          xcodebuild test -project UniversalCamPhone.xcodeproj -scheme UniversalCamPhone \
+          xcodebuild test -project CamoRip.xcodeproj -scheme CamoRip \
             -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -derivedDataPath ../artifacts/ios-tests \
             -resultBundlePath ../artifacts/PhoneEfficiencyTests.xcresult \

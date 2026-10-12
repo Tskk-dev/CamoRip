@@ -23,11 +23,11 @@
 
         <!-- Per-monitor DPI awareness -->
         <ApplicationManifest>app.manifest</ApplicationManifest>
-        <ApplicationIcon>universal_cam.ico</ApplicationIcon>
+        <ApplicationIcon>camorip.ico</ApplicationIcon>
     </PropertyGroup>
 
     <ItemGroup>
-        <Content Include="universal_cam.ico" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="camorip.ico" CopyToOutputDirectory="PreserveNewest" />
         <PackageReference Include="QRCoder" Version="1.8.0" />
         <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     </ItemGroup>

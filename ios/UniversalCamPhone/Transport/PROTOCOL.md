@@ -1,8 +1,9 @@
-# USB webcam protocol v1
+# CamoRip video protocol v1
 
 Windows connects through Apple's usbmux service to the iPhone loopback listener
-`127.0.0.1:7780`. There is one ordered TCP byte stream. There is no Wi-Fi discovery,
-audio stream, external server, or TLS certificate exchange.
+`127.0.0.1:7780` for USB. Wireless uses the paired local-network transport described
+in [the wireless guide](../../../docs/WIRELESS.md). Both transports carry the same
+video and control protocol. No audio or external server is used.
 
 ## Framing
 

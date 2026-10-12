@@ -14,7 +14,6 @@ public class ControlMessageTests
         Assert.Equal("camera_permission", error.Code);
         Assert.Contains("Settings", error.Message);
     }
-    // ── Serialization helpers ─────────────────────────────────────────────────
 
     private static ControlMessage? Round(ControlMessage msg)
         => ControlMessage.FromJson(msg.ToJsonBytes());
@@ -22,7 +21,6 @@ public class ControlMessageTests
     private static ControlMessage? ParseJson(string json)
         => ControlMessage.FromJson(Encoding.UTF8.GetBytes(json));
 
-    // ── Round-trip tests ──────────────────────────────────────────────────────
 
     [Fact]
     public void Configure_RoundTrip_AllFieldsPreserved()
@@ -64,7 +62,6 @@ public class ControlMessageTests
         Assert.Equal(msg.CameraId, back.CameraId);
     }
 
-    // ── Deserialization from raw JSON ─────────────────────────────────────────
 
     [Fact]
     public void Hello_Deserialize_ParsesDeviceNameAndCapabilities()
@@ -112,7 +109,6 @@ public class ControlMessageTests
         Assert.Equal(1234567890123L, pong.Ts);
     }
 
-    // ── Unknown type ─────────────────────────────────────────────────────────
 
     [Fact]
     public void UnknownType_FromJson_ReturnsNull()
@@ -129,7 +125,6 @@ public class ControlMessageTests
         Assert.IsType<Welcome>(result);
     }
 
-    // ── ToJsonBytes sanity ────────────────────────────────────────────────────
 
     [Fact]
     public void ToJsonBytes_ContainsTypeField()

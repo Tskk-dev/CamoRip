@@ -1,11 +1,15 @@
 # Contributing
 
-Read AGENTS.md, README.md, and docs/UPSTREAM_AUDIT.md first. V1 supports a video-only iOS 15 USB companion and a Windows 11 x64 Media Foundation virtual camera.
+Keep changes focused, preserve third-party notices, and document protocol changes on both platforms. Do not include pairing records, device identifiers or private images in logs or reports.
 
-## Build and verify
+## Build
 
-- Windows: install .NET 8, MSVC, CMake, and a Windows 11 SDK, then run `./scripts/build-windows.ps1`. This builds both native DLLs, runs the managed and native tests, and publishes the desktop app.
-- iOS: install Xcode and XcodeGen on macOS, run `xcodegen generate` in `ios/`, and open the generated Xcode project. GitHub Actions builds an unsigned IPA without a paid membership.
-- Use docs/VALIDATION.md for checks requiring an actual iPhone, Apple USB support, Frame Server, and a meeting app. Record failures and unperformed checks accurately.
+- Windows: install .NET 8, MSVC, CMake and the Windows 11 SDK, then run `./scripts/build-windows.ps1`.
+- iOS: install Xcode and XcodeGen on macOS, run `xcodegen generate` in `ios/`, then build the generated project.
+- CI builds unsigned iOS IPAs. Physical installation and USB or Wi-Fi streaming require a device check.
 
-Branch from `main`, keep changes focused, preserve third-party notices, and document protocol changes on both platforms. Include relevant build results and device details in pull requests and bug reports. Exclude pairing records, personal device identifiers, and private images from logs and reports.
+## C# style
+
+Follow the repository `.editorconfig`, adapted from osu!lazer's C# conventions. Keep comments on their own line, use XML documentation for public APIs, and explain non-obvious behavior or constraints. Avoid comments that repeat the code, duplicate inherited documentation, or label test phases and code sections.
+
+Keep PRs small and include relevant build results and device details. Do not claim physical-device checks based on simulator results.

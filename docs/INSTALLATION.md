@@ -16,16 +16,14 @@ Logs are stored under `%LOCALAPPDATA%/UniversalCam/Logs/latest.log`. Video is no
 
 CI produces two **unsigned arm64 IPAs** from the same source:
 
-- `camorip-ios-unsigned`: `CamoRip-ios15-unsigned.ipa`, iOS 15 or later, including the iPhone 6s Plus.
-- `camorip-iphone16-unsigned`: `CamoRip-iphone16-ios18-unsigned.ipa`, iOS 18 or later, intended for iPhone 16. This profile also runs on other compatible iPhones; it is not a different feature tier.
+- `camorip-ios-legacy-unsigned`: `CamoRip-legacy-unsigned.ipa`, iOS 15 or later.
+- `camorip-ios-regular-unsigned`: `CamoRip-regular-unsigned.ipa`, iOS 18 or later.
 
-Both packages preserve camera modes, phone-side adjustments, torch, quality controls, screen dimming and preview controls. They share the bundle identifier and replace one another when installed. Use the matching Windows companion for all controls. The iPhone 16 uses a USB-C **data** cable and the same Apple Devices pairing/trust procedure; no Lightning adapter is required. Simulator checks and builds do not establish physical USB streaming on that model.
+Both packages have the same features and share the app identity. Use the matching Windows companion. Builds and simulator runs do not establish physical USB or Wi-Fi streaming.
 
-Sign the iPhone 16 IPA with an installer supported by its actual iOS version (for example a free Apple ID signing route); do not assume the older phone's jailbreak install method applies.
+A jailbreak alone does not establish that it can install arbitrary unsigned apps. Check that the installer supports the phone's iOS version, signature handling and entitlements. Confirm the app launches, requests Camera permission and remains usable after relaunch.
 
- A jailbreak alone does not establish that it can install arbitrary unsigned apps. Before relying on an install route, check the actual iOS version, jailbreak, installer, signature handling, and entitlements on this phone. Use the existing installer and its documented signing requirements. Do not mark this step passed until the app launches, requests Camera permission, and remains usable after relaunch.
-
-If that route rejects the package, use an installer that signs with a free Apple ID/Personal Team. Follow its trusted local signing flow. Personal Team provisioning profiles expire after seven days and require renewal; CI does not bypass this. [Apple account guidance](https://developer.apple.com/help/account/basics/about-your-developer-account).
+If the installer rejects the package, use a supported free Apple ID signing method. Personal Team provisioning profiles expire after seven days and require renewal; CI does not bypass this. [Apple account guidance](https://developer.apple.com/help/account/basics/about-your-developer-account).
 
 Grant Camera permission, leave the app in the foreground, and connect the data cable. iOS normally suspends camera capture in the background; the app stops streaming when it goes into the background. The display is kept awake during streaming.
 

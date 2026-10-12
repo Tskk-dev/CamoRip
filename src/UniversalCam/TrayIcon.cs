@@ -18,7 +18,7 @@ internal sealed class TrayIcon : IDisposable
         _window = window;
         _callback = Proc;
         _previous = SetWindowLongPtr(window, -4, Marshal.GetFunctionPointerForDelegate(_callback));
-        _icon = LoadImage(0, System.IO.Path.Combine(AppContext.BaseDirectory, "universal_cam.ico"), 1, 32, 32, 0x10);
+        _icon = LoadImage(0, System.IO.Path.Combine(AppContext.BaseDirectory, "camorip.ico"), 1, 32, 32, 0x10);
         _data = new() { Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = window, Id = 1, Flags = 7,
             Callback = CallbackMessage, Icon = _icon != 0 ? _icon : LoadIcon(0, (nint)32512), Tip = "CamoRip" };
         Shell_NotifyIcon(0, ref _data);

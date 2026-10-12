@@ -71,7 +71,7 @@ public sealed partial class MainWindow : Window
         _app = app; _service = service;
         InitializeComponent();
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1180, 820));
-        AppWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "universal_cam.ico"));
+        AppWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "camorip.ico"));
         SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
         _sliders = new() { ["exposure_bias"] = ExposureBias, ["iso"] = Iso, ["shutter_ms"] = Shutter,
             ["focus"] = Focus, ["temperature"] = Temperature, ["tint"] = Tint, ["torch_level"] = TorchLevel };

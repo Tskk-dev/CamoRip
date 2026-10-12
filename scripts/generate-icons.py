@@ -27,7 +27,7 @@ def render(size):
 
 
 def main():
-    render(1024).save(ROOT / "ios/Media.xcassets/AppIcon.appiconset/universal_cam_ios_1024.png")
+    render(1024).save(ROOT / "ios/Media.xcassets/AppIcon.appiconset/camorip_ios_1024.png")
     sizes = (16, 20, 24, 32, 40, 48, 64, 128, 256)
     payloads = []
     for size in sizes:
@@ -41,7 +41,7 @@ def main():
         entries.append(struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0,
                                    1, 32, len(payload), offset))
         offset += len(payload)
-    (ROOT / "src/UniversalCam/universal_cam.ico").write_bytes(
+    (ROOT / "src/UniversalCam/camorip.ico").write_bytes(
         struct.pack("<HHH", 0, 1, len(sizes)) + b"".join(entries) + b"".join(payloads))
 
 
