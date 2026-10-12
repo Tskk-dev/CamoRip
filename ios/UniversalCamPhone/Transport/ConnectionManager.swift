@@ -14,10 +14,14 @@ final class ConnectionManager: ObservableObject {
     @Published private(set) var usbListening = false
     @Published private(set) var wantsStreaming = false
     @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
-    weak var cameraSession: CameraSession?
+    weak var cameraSession: PhoneCapture?
 
-    private let transport = USBTransport()
-    private let encoder = VideoEncoder()
+    private let transport: PhoneTransport
+    private let encoder: PhoneEncoder
+    private let applicationIsActive: () -> Bool
+    private let cameraIsAuthorized: () -> Bool
+    private let setIdleTimerDisabled: (Bool) -> Void
+    private let enableTimers: Bool
     private var negotiated = false
     private var configuring = false
     private var startRequested = false
@@ -32,7 +36,17 @@ final class ConnectionManager: ObservableObject {
     private var lastPong = Date()
     private var backgroundObserver: NSObjectProtocol?
 
-    init() {
+    init(transport: PhoneTransport = USBTransport(), encoder: PhoneEncoder = VideoEncoder(),
+         applicationIsActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
+         cameraIsAuthorized: @escaping () -> Bool = { AVCaptureDevice.authorizationStatus(for: .video) == .authorized },
+         setIdleTimerDisabled: @escaping (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
+         enableTimers: Bool = true) {
+        self.transport = transport
+        self.encoder = encoder
+        self.applicationIsActive = applicationIsActive
+        self.cameraIsAuthorized = cameraIsAuthorized
+        self.setIdleTimerDisabled = setIdleTimerDisabled
+        self.enableTimers = enableTimers
         transport.onStateChange = { [weak self] state in
             DiagnosticLog.write("USB state: \(String(describing: state))")
             DispatchQueue.main.async { self?.transportChanged(state) }
@@ -79,11 +93,11 @@ final class ConnectionManager: ObservableObject {
     /// The callback waits for capture configuration before enabling frame delivery.
     func startStreaming(notifyPeer: Bool = true) {
         guard activeTransport == .usb else { return }
-        guard UIApplication.shared.applicationState == .active else {
+        guard applicationIsActive() else {
             fail(code: "app_in_background", message: "Open UniversalCam on the iPhone to start video.")
             return
         }
-        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+        guard cameraIsAuthorized() else {
             fail(code: "camera_denied", message: "Enable Camera permission in iPhone Settings."); return
         }
         wantsStreaming = true
@@ -99,7 +113,7 @@ final class ConnectionManager: ObservableObject {
         cameraSession?.start()
         encoder.requestKeyframe()
         streamingLock.lock(); streamingForCapture = true; streamingLock.unlock()
-        UIApplication.shared.isIdleTimerDisabled = true
+        setIdleTimerDisabled(true)
         state = .streaming
         DiagnosticLog.write("Stream started: \(formatLabel), bitrate=\(bitrate)")
         _ = DiagnosticLog.takeMetrics() // Exclude camera preview frames captured before streaming.
@@ -115,7 +129,7 @@ final class ConnectionManager: ObservableObject {
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         // Stop accepting raw frames before flushing the old compression session.
         if activeTransport == .usb { state = .connected }
-        UIApplication.shared.isIdleTimerDisabled = false
+        setIdleTimerDisabled(false)
         encoder.flush()
         metricsTimer?.invalidate()
         metricsTimer = nil
@@ -207,7 +221,7 @@ final class ConnectionManager: ObservableObject {
         pendingStartNotifiesPeer = false
         wantsStreaming = false
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
-        UIApplication.shared.isIdleTimerDisabled = false
+        setIdleTimerDisabled(false)
         encoder.invalidate()
         pingTimer?.invalidate()
         pingTimer = nil
@@ -316,6 +330,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func startMetricsLogging() {
+        guard enableTimers else { return }
         metricsTimer?.invalidate()
         metricsTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
             DiagnosticLog.write("METRIC " + DiagnosticLog.takeMetrics() +
@@ -351,6 +366,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func startHeartbeat() {
+        guard enableTimers else { return }
         lastPong = Date()
         pingTimer?.invalidate()
         pingTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in

@@ -249,3 +249,22 @@ the preview cadence commit; it is not a complete installer result.
   Documents/UniversalCam.log. A successful build is not proof of a crash fix.
 - API reference:
   https://developer.apple.com/documentation/avkit/choosing-a-camera-by-the-direction-it-faces?language=objc
+
+## Simulated phone streaming and camera-switch integration
+
+- The production iOS ConnectionManager accepts injected camera, encoder and
+  transport interfaces. Normal app construction still uses CameraSession,
+  VideoEncoder and the loopback-only USBTransport; no simulator networking
+  fallback or Wi-Fi streaming is enabled in the shipped app.
+- StreamingSwitchTests uses a simulated PC endpoint with real JSON control
+  serialization, synthetic CMSampleBuffers and a fake encoder/video sink.
+  It runs the actual coordinator through handshake/start, 100 switches with
+  resumed frame delivery and keyframes, negotiated front-camera fallback,
+  drain/prepare frame gating, stop during switch, stopped switching, disconnect
+  during drain/prepare, reconnect, superseded callbacks, and camera/encoder
+  preparation failures. Timers and permission/application checks are injected
+  so scenarios run deterministically without camera permission or foreground UI.
+- These tests do not run the Windows executable, Apple USB driver/usbmux,
+  AVFoundation input replacement, hardware H.264 encoder/decoder, Windows
+  virtual camera or a meeting app. Their frame payload is a synthetic marker,
+  not decodable H.264. Physical crash resolution remains unverified.

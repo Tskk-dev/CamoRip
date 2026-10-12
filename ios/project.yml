@@ -61,6 +61,12 @@ targets:
       - path: Tests
       - path: UniversalCamPhone/Camera/CameraControlProtocol.swift
       - path: UniversalCamPhone/Camera/CaptureMirroring.swift
+      - path: UniversalCamPhone/Camera/CameraSession.swift
+      - path: UniversalCamPhone/Camera/CameraControls.swift
+      - path: UniversalCamPhone/Camera/VideoEncoder.swift
+      - path: UniversalCamPhone/Transport/ConnectionManager.swift
+      - path: UniversalCamPhone/Transport/USBTransport.swift
+      - path: UniversalCamPhone/Transport/StreamingDependencies.swift
       - path: UniversalCamPhone/Camera/AnnexB.swift
       - path: UniversalCamPhone/UI/StreamingScreenDimmer.swift
       - path: UniversalCamPhone/Diagnostics/DiagnosticLog.swift
