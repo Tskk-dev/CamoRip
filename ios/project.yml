@@ -1,4 +1,4 @@
-name: UniversalCamPhone
+name: CamoRip
 options:
   bundleIdPrefix: com.universalcam
   deploymentTarget:
@@ -12,7 +12,7 @@ settings:
     VALID_ARCHS: arm64
 
 targets:
-  UniversalCamPhone:
+  CamoRip:
     type: application
     platform: iOS
     deploymentTarget: "15.0"
@@ -24,7 +24,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.universalcam.phone
-        PRODUCT_NAME: UniversalCam
+        PRODUCT_NAME: CamoRip
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"       # iPhone only
         VALID_ARCHS: arm64
@@ -37,14 +37,17 @@ targets:
     info:
       path: UniversalCamPhone/Info.plist
       properties:
-        CFBundleName: UniversalCam
-        CFBundleDisplayName: UniversalCam
-        CFBundleVersion: "1"
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleName: CamoRip
+        CFBundleDisplayName: CamoRip
+        CFBundleVersion: "9"
+        CFBundleShortVersionString: "0.4.0"
         UILaunchStoryboardName: ""
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
-        NSCameraUsageDescription: "UniversalCam uses your camera to stream video to your Windows PC."
+        NSCameraUsageDescription: "CamoRip uses your camera to stream video to your Windows PC."
+        NSLocalNetworkUsageDescription: "CamoRip connects to your paired Windows PC to stream camera video over your local Wi-Fi network."
+        NSBonjourServices:
+          - "_camorip._tcp"
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations:
@@ -52,19 +55,44 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
     dependencies: []
-    scheme:
-      testTargets: []
-      gatherCoverageData: false
+
+  CamoRipTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests
+      - path: UniversalCamPhone/Camera/CameraControlProtocol.swift
+      - path: UniversalCamPhone/Camera/CaptureMirroring.swift
+      - path: UniversalCamPhone/Camera/CameraSession.swift
+      - path: UniversalCamPhone/Camera/CameraControls.swift
+      - path: UniversalCamPhone/Camera/VideoEncoder.swift
+      - path: UniversalCamPhone/Transport/ConnectionManager.swift
+      - path: UniversalCamPhone/Transport/USBTransport.swift
+      - path: UniversalCamPhone/Transport/StreamingDependencies.swift
+      - path: UniversalCamPhone/Transport/AutomaticPhoneTransport.swift
+      - path: UniversalCamPhone/Transport/WirelessPeer.swift
+      - path: UniversalCamPhone/Camera/AnnexB.swift
+      - path: UniversalCamPhone/UI/StreamingScreenDimmer.swift
+      - path: UniversalCamPhone/Diagnostics/DiagnosticLog.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        CODE_SIGNING_ALLOWED: NO
 
 schemes:
-  UniversalCamPhone:
+  CamoRip:
     build:
       targets:
-        UniversalCamPhone: all
+        CamoRip: all
+        CamoRipTests: [test]
     run:
       config: Debug
     test:
       config: Debug
+      targets:
+        - CamoRipTests
     profile:
       config: Release
     analyze:

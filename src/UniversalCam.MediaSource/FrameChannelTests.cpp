@@ -60,6 +60,18 @@ int wmain() {
         InterlockedAdd64(&writer->header->sequence, 2);
         Require(!reader.Read(destination.data(), restarted + 1001), "reject invalid slot");
         UCamCloseWriter(context); context = nullptr;
+        for (const NativeFormat format : {NativeFormat{1280,720,30}, NativeFormat{3840,2160,30}, NativeFormat{1920,1080,60}}) {
+            reader.SetFormat(format);
+            Require(SUCCEEDED(UCamOpenWriterMode(path.c_str(), format.width, format.height, &context)), "open selected mode");
+            std::vector<BYTE> input(format.Bytes(), 129), output(format.Bytes());
+            Require(SUCCEEDED(UCamWriteFrame(context, input.data(), format.Bytes(), 0)), "write selected mode");
+            Require(reader.Read(output.data()), "read selected mode after cache resize");
+            Require(input == output, "selected mode pixels");
+            Require(UCamWriteFrame(context, input.data(), format.Bytes() - 1, 0) == E_INVALIDARG, "reject wrong byte length");
+            UCamCloseWriter(context); context = nullptr;
+            Require(!reader.Read(output.data()), "selected mode close invalidates cache");
+        }
+        Require(UCamOpenWriterMode(path.c_str(), 3841, 2160, &context) == E_INVALIDARG, "reject odd resolution");
         std::wcout << L"Frame channel cache, collision, expiry, stop and restart checks passed.\n";
         return 0;
     } catch (const std::exception& error) {

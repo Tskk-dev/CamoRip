@@ -113,16 +113,11 @@ public class NV12ConverterTests
     [Fact]
     public void ConvertBgra32ToNv12_ValidInput_ProducesCorrectSize()
     {
-        // Arrange: 1920x1080 BGRA32 frame
         int width = 1920;
         int height = 1080;
         int bgraSize = width * height * 4;
         byte[] bgra = new byte[bgraSize];
-
-        // Act
         byte[] nv12 = NV12Converter.ConvertBgra32ToNv12(bgra, width, height);
-
-        // Assert
         int expectedSize = width * height * 3 / 2;
         Assert.Equal(expectedSize, nv12.Length);
     }
@@ -130,7 +125,6 @@ public class NV12ConverterTests
     [Fact]
     public void ConvertBgra32ToNv12_SmallFrame_ProducesCorrectSize()
     {
-        // Arrange: 2x2 BGRA32 frame (simplest non-trivial case)
         int width = 2;
         int height = 2;
         byte[] bgra = new byte[width * height * 4];
@@ -143,11 +137,7 @@ public class NV12ConverterTests
             bgra[i + 2] = 255; // R
             bgra[i + 3] = 255; // A
         }
-
-        // Act
         byte[] nv12 = NV12Converter.ConvertBgra32ToNv12(bgra, width, height);
-
-        // Assert
         // 2x2 frame: Y plane = 4 bytes, UV plane = 2 bytes
         int expectedSize = 2 * 2 * 3 / 2;  // 6 bytes
         Assert.Equal(expectedSize, nv12.Length);
@@ -156,10 +146,7 @@ public class NV12ConverterTests
     [Fact]
     public void ConvertBgra32ToNv12_InvalidSize_ThrowsArgumentException()
     {
-        // Arrange
         byte[] bgra = new byte[100];  // Wrong size
-
-        // Act & Assert
         Assert.Throws<ArgumentException>(() =>
             NV12Converter.ConvertBgra32ToNv12(bgra, 1920, 1080));
     }
@@ -167,15 +154,10 @@ public class NV12ConverterTests
     [Fact]
     public void ConvertBgra32ToNv12_BlackFrame_ProducesZeroYValues()
     {
-        // Arrange: All black pixels (R=0, G=0, B=0)
         int width = 4;
         int height = 4;
         byte[] bgra = new byte[width * height * 4];
-
-        // Act
         byte[] nv12 = NV12Converter.ConvertBgra32ToNv12(bgra, width, height);
-
-        // Assert: Y plane should be all zeros (black = no luminance)
         for (int i = 0; i < width * height; i++)
         {
             Assert.Equal(0, nv12[i]);
@@ -185,7 +167,6 @@ public class NV12ConverterTests
     [Fact]
     public void ConvertBgra32ToNv12_WhiteFrame_ProducesMaxYValues()
     {
-        // Arrange: All white pixels (R=255, G=255, B=255)
         int width = 4;
         int height = 4;
         byte[] bgra = new byte[width * height * 4];
@@ -196,11 +177,7 @@ public class NV12ConverterTests
             bgra[i + 2] = 255;  // R
             bgra[i + 3] = 255;  // A
         }
-
-        // Act
         byte[] nv12 = NV12Converter.ConvertBgra32ToNv12(bgra, width, height);
-
-        // Assert: Y plane should be all 255 (white = max luminance)
         for (int i = 0; i < width * height; i++)
         {
             Assert.Equal(255, nv12[i]);

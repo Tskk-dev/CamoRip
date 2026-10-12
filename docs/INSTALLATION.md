@@ -2,19 +2,28 @@
 
 ## Windows
 
+For Wi-Fi, follow [wireless pairing](WIRELESS.md). Apple device support is required for USB only. The installer adds app-specific, local-subnet firewall rules on Private networks for video (TCP 7781) and discovery (UDP 5353).
+
 Install Apple Devices or iTunes from Apple's supported distribution and connect the phone once. Confirm the Apple application can see it. Unlock the phone and accept Trust This Computer.
 
 Download the Windows artifact from a successful Actions run and run its setup executable. Administrator elevation installs and registers `UCamMediaSource.dll`; the companion itself runs as the signed-in user. Builds are not Authenticode-signed, so Windows may show an unknown-publisher prompt. Verify that the download is from this repository and commit.
 
-Keep the companion running while using the camera. Choose **USB iPhone Camera** in the target application's camera menu after the companion reports that the Windows camera started. If an app caches the device list, reopen its camera settings or restart that app.
+Keep the companion running while using the camera. Choose **CamoRip** in the target application's camera menu after the companion reports that the Windows camera started. If an app caches the device list, reopen its camera settings or restart that app.
 
 Logs are stored under `%LOCALAPPDATA%/UniversalCam/Logs/latest.log`. Video is not intentionally written to the log. Session frames use a protected temporary mapping under the same application's local data directory.
 
 ## iPhone: unsigned IPA
 
-The CI artifact is an **unsigned arm64 IPA targeting iOS 15**. A jailbreak alone does not establish that it can install arbitrary unsigned apps. Before relying on an install route, check the actual iOS version, jailbreak, installer, signature handling, and entitlements on this phone. Use the existing installer and its documented signing requirements. Do not mark this step passed until the app launches, requests Camera permission, and remains usable after relaunch.
+CI produces two **unsigned arm64 IPAs** from the same source:
 
-If that route rejects the package, use an installer that signs with a free Apple ID/Personal Team. Follow its trusted local signing flow. Personal Team provisioning profiles expire after seven days and require renewal; CI does not bypass this. [Apple account guidance](https://developer.apple.com/help/account/basics/about-your-developer-account).
+- `camorip-ios-legacy-unsigned`: `CamoRip-legacy-unsigned.ipa`, iOS 15 or later.
+- `camorip-ios-regular-unsigned`: `CamoRip-regular-unsigned.ipa`, iOS 18 or later.
+
+Both packages have the same features and share the app identity. Use the matching Windows companion. Builds and simulator runs do not establish physical USB or Wi-Fi streaming.
+
+A jailbreak alone does not establish that it can install arbitrary unsigned apps. Check that the installer supports the phone's iOS version, signature handling and entitlements. Confirm the app launches, requests Camera permission and remains usable after relaunch.
+
+If the installer rejects the package, use a supported free Apple ID signing method. Personal Team provisioning profiles expire after seven days and require renewal; CI does not bypass this. [Apple account guidance](https://developer.apple.com/help/account/basics/about-your-developer-account).
 
 Grant Camera permission, leave the app in the foreground, and connect the data cable. iOS normally suspends camera capture in the background; the app stops streaming when it goes into the background. The display is kept awake during streaming.
 

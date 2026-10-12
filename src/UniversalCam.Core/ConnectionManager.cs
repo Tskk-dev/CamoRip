@@ -3,14 +3,19 @@ using UniversalCam.Core.Transport;
 
 namespace UniversalCam.Core;
 
-/// <summary>USB-only handshake and video streaming state for the Windows companion.</summary>
+/// <summary>Local USB/Wi-Fi handshake and video streaming state for the Windows companion.</summary>
 public sealed class ConnectionManager : IAsyncDisposable
 {
+    public event EventHandler<string>? Failure;
+    public event EventHandler<CameraState>? CameraStateReceived;
+    public bool SupportsCameraSettings { get; private set; }
+    public bool SupportsBitrateControl { get; private set; }
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;
     public event EventHandler<AvailableCameras>? CamerasReceived;
     public event EventHandler? CameraSwitched;
     public event EventHandler<int>? LatencyUpdated;
+    public event EventHandler<double>? RoundTripUpdated;
     public event EventHandler<string>? OrientationChanged;
     public event EventHandler<string>? Diagnostic;
     public event EventHandler<ConfigureAck>? ConfigurationAcknowledged;
@@ -19,33 +24,35 @@ public sealed class ConnectionManager : IAsyncDisposable
     public TransportState State { get; private set; } = TransportState.Idle;
     public TransportType ActiveTransport { get; private set; } = TransportType.None;
     public string DeviceName { get; private set; } = "iPhone";
-    public string StatusMessage { get; private set; } = "Connect the iPhone over USB.";
+    public string StatusMessage { get; private set; } = "Connect an iPhone over USB or pair over Wi-Fi.";
     public bool IsStreaming { get; private set; }
     public string CaptureResolution { get; private set; } = string.Empty;
     public int CaptureFrameRate { get; private set; }
 
-    private readonly TcpUsbTransport _usb;
+    private readonly IConnectionTransport _usb;
+    public WirelessTransport? Wireless => (_usb as AutomaticTransport)?.Wireless;
     private bool _started;
     private bool _disposed;
     private volatile bool _desiredStreaming = true;
     private volatile bool _configurationPending;
     private volatile bool _startAfterConfigure;
-    private volatile bool _configured;
     private bool _sessionReady;
     private int _generation;
     private int _configurationGeneration;
     private int _transportGeneration;
+    private long _configurationRequestId;
+    private long _pingToken, _pingSentTicks;
 
-    public ConnectionManager() : this(new TcpUsbTransport()) { }
+    public ConnectionManager() : this(new AutomaticTransport(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalCam"))) { }
 
-    public ConnectionManager(TcpUsbTransport transport)
+    public ConnectionManager(IConnectionTransport transport)
     {
         _usb = transport ?? throw new ArgumentNullException(nameof(transport));
         _usb.Diagnostic += (_, message) => Report(message);
         _usb.StateChanged += (_, state) => OnTransportStateChanged(state);
         _usb.FrameReceived += (_, frame) =>
         {
-            if (ActiveTransport == TransportType.USB && IsStreaming && frame.IsVideo)
+            if (ActiveTransport != TransportType.None && IsStreaming && frame.IsVideo)
                 FrameReceived?.Invoke(this, frame);
         };
         _usb.ControlMessageReceived += (_, message) => OnControlMessage(message);
@@ -64,12 +71,15 @@ public sealed class ConnectionManager : IAsyncDisposable
     {
         if (codec != "h264") throw new ArgumentException("Only H.264 is supported.", nameof(codec));
         if (fps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(fps), "Choose 1–60 fps.");
-        if (bitrate is < 100_000 or > 20_000_000) throw new ArgumentOutOfRangeException(nameof(bitrate));
-        if (ActiveTransport != TransportType.USB) return Task.CompletedTask;
+        if (Video.VideoMode.Parse(resolution, fps) is null) throw new ArgumentException("Choose a valid NV12 capture mode up to 4K.", nameof(resolution));
+        if (bitrate is < Video.VideoBitrate.Minimum or > Video.VideoBitrate.Maximum) throw new ArgumentOutOfRangeException(nameof(bitrate));
+        if (bitrate > 20_000_000 && !SupportsBitrateControl) throw new InvalidOperationException("Update the iPhone app to use bitrates above 20 Mbps.");
+        if (ActiveTransport == TransportType.None) return Task.CompletedTask;
         _configurationGeneration = Volatile.Read(ref _generation);
         _configurationPending = true;
-        _startAfterConfigure = !_configured && _desiredStreaming;
-        return SendAsync(new Configure { Resolution = resolution, Fps = fps, Codec = codec, Bitrate = bitrate }, ct);
+        _startAfterConfigure = _desiredStreaming;
+        SetStreaming(false);
+        return SendAsync(new Configure { RequestId = Interlocked.Increment(ref _configurationRequestId), Resolution = resolution, Fps = fps, Codec = codec, Bitrate = bitrate }, ct);
     }
 
     public Task StartStreamAsync(CancellationToken ct = default)
@@ -86,11 +96,18 @@ public sealed class ConnectionManager : IAsyncDisposable
     public Task ListCamerasAsync(CancellationToken ct = default) => SendAsync(new ListCameras(), ct);
     public Task SwitchCameraAsync(string? cameraId, CancellationToken ct = default) =>
         SendAsync(new SwitchCamera { CameraId = cameraId }, ct);
-    public Task PingAsync(CancellationToken ct = default) =>
-        SendAsync(new Ping { Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, ct);
+    public Task RequestCameraStateAsync(CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(new GetCameraState(), ct) : Task.CompletedTask;
+    public Task SetCameraSettingsAsync(CameraSettings settings, CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(settings, ct) : Task.CompletedTask;
+    public Task PingAsync(CancellationToken ct = default)
+    {
+        var token = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        Interlocked.Exchange(ref _pingSentTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+        Interlocked.Exchange(ref _pingToken, token);
+        return SendAsync(new Ping { Ts = token }, ct);
+    }
 
     private Task SendAsync(ControlMessage message, CancellationToken ct) =>
-        ActiveTransport == TransportType.USB ? _usb.SendControlForConnectionAsync(message, Volatile.Read(ref _transportGeneration), ct) : Task.CompletedTask;
+        ActiveTransport != TransportType.None ? _usb.SendControlForConnectionAsync(message, Volatile.Read(ref _transportGeneration), ct) : Task.CompletedTask;
 
     private void OnTransportStateChanged(TransportState state)
     {
@@ -99,7 +116,6 @@ public sealed class ConnectionManager : IAsyncDisposable
             var generation = Interlocked.Increment(ref _generation);
             _transportGeneration = _usb.ConnectionGeneration;
             _sessionReady = false;
-            _configured = false;
             _configurationPending = false;
             ActiveTransport = TransportType.None;
             // Transport connection is not ready for use until Hello identifies the app.
@@ -111,6 +127,8 @@ public sealed class ConnectionManager : IAsyncDisposable
         {
             Interlocked.Increment(ref _generation);
             _sessionReady = false;
+            SupportsCameraSettings = false;
+            SupportsBitrateControl = false;
             _configurationPending = false;
             _startAfterConfigure = false;
             ActiveTransport = TransportType.None;
@@ -119,6 +137,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             SetStreaming(false);
         }
         SetState(state);
+        if (state == TransportState.Error) Failure?.Invoke(this, StatusMessage);
     }
 
     private async Task SendHandshakeAsync(int generation, int transportGeneration)
@@ -129,7 +148,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             await _usb.SendControlForConnectionAsync(new Welcome(), transportGeneration);
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
-        { if (!_disposed) Report("USB handshake interrupted. Reconnecting to the iPhone."); }
+        { if (!_disposed) Report("Camera handshake interrupted. Reconnecting to the iPhone."); }
     }
 
     private void OnControlMessage(ControlMessage message)
@@ -143,25 +162,32 @@ public sealed class ConnectionManager : IAsyncDisposable
                 SetState(TransportState.Error);
                 return;
             }
+            SupportsCameraSettings = hello.Capabilities.Contains("camera_controls_v1");
+            SupportsBitrateControl = hello.Capabilities.Contains("bitrate_control_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
             _desiredStreaming = true;
-            ActiveTransport = TransportType.USB;
+            ActiveTransport = _usb.Kind;
             SetStreaming(false);
-            Report($"{DeviceName} connected over USB.");
+            Report($"{DeviceName} connected over {ActiveTransport}.");
             SetState(TransportState.Connected);
             return;
         }
-        if (ActiveTransport != TransportType.USB) return;
+        if (ActiveTransport == TransportType.None) return;
         switch (message)
         {
+            case CameraState cameraState:
+                CameraStateReceived?.Invoke(this, cameraState);
+                break;
             case ConfigureAck ack:
+                if (ack.RequestId > 0 && (!_configurationPending || ack.RequestId != Interlocked.Read(ref _configurationRequestId))) break;
+                if (Video.VideoMode.Parse(ack.Resolution, ack.Fps) is null)
+                { Failure?.Invoke(this, "The phone acknowledged an invalid capture mode."); break; }
                 var generation = Volatile.Read(ref _generation);
                 var start = _configurationPending && _configurationGeneration == generation &&
                     _startAfterConfigure && _desiredStreaming;
                 _configurationPending = false;
                 _startAfterConfigure = false;
-                _configured = true;
                 CaptureResolution = ack.Resolution;
                 CaptureFrameRate = ack.Fps;
                 ConfigurationAcknowledged?.Invoke(this, ack);
@@ -171,15 +197,16 @@ public sealed class ConnectionManager : IAsyncDisposable
             case StartStream:
                 _desiredStreaming = true;
                 SetStreaming(true);
-                Report($"Streaming {CaptureResolution} at {CaptureFrameRate} fps over USB.");
+                Report($"Streaming {CaptureResolution} at {CaptureFrameRate} fps over {ActiveTransport}.");
                 break;
             case StopStream:
                 _desiredStreaming = false;
                 _startAfterConfigure = false;
                 SetStreaming(false);
-                Report("Streaming stopped. The USB connection is ready.");
+                Report("Streaming stopped. The connection is ready.");
                 break;
             case ErrorMessage error:
+                Failure?.Invoke(this, error.Message);
                 _startAfterConfigure = false;
                 SetStreaming(false);
                 Report(string.IsNullOrWhiteSpace(error.Code) ? error.Message : $"{error.Code}: {error.Message}");
@@ -191,8 +218,14 @@ public sealed class ConnectionManager : IAsyncDisposable
                 CamerasReceived?.Invoke(this, cameras);
                 break;
             case Pong pong:
-                var rtt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - pong.Ts;
-                if (rtt is >= 0 and <= 60_000) LatencyUpdated?.Invoke(this, (int)(rtt / 2));
+                if (pong.Ts != Interlocked.Read(ref _pingToken)) break;
+                var sent = Interlocked.Exchange(ref _pingSentTicks, 0);
+                if (sent == 0) break;
+                var rtt = System.Diagnostics.Stopwatch.GetElapsedTime(sent).TotalMilliseconds;
+                if (rtt is >= 0 and <= 60_000) {
+                    RoundTripUpdated?.Invoke(this, rtt);
+                    LatencyUpdated?.Invoke(this, (int)(rtt / 2));
+                }
                 break;
             case Ping ping:
                 _ = ReplyPongAsync(ping.Ts);
@@ -211,7 +244,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             await _usb.SendControlForConnectionAsync(new StartStream(), transportGeneration);
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
-        { if (!_disposed) Report("USB connection interrupted before streaming could start."); }
+        { if (!_disposed) Report("Camera connection interrupted before streaming could start."); }
     }
 
     private async Task ReplyPongAsync(long timestamp)
@@ -243,12 +276,13 @@ public sealed class ConnectionManager : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
-        try { await StopStreamAsync(); }
+        using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try { await StopStreamAsync(stopTimeout.Token); }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
         _disposed = true;
         await _usb.DisposeAsync();
     }
 }
 
-// WiFi is retained as an enum value for source compatibility; no Wi-Fi transport is created.
+// Exactly one local transport is active at a time.
 public enum TransportType { None, WiFi, USB }

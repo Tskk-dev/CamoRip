@@ -7,9 +7,10 @@ namespace UniversalCam.Core.Transport;
 /// Connects Apple's local USB multiplexing service directly to the iPhone app.
 /// No forwarding process, external server, LAN socket, or network device is used.
 /// </summary>
-public sealed class TcpUsbTransport : ITransport
+public sealed class TcpUsbTransport : IConnectionTransport
 {
     public const ushort Port = 7780;
+    public TransportType Kind => TransportType.USB;
     public event EventHandler<ControlMessage>? ControlMessageReceived;
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;

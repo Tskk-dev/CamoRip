@@ -32,7 +32,7 @@ final class CameraSession: NSObject, ObservableObject {
     var onVideoSampleBuffer: ((CMSampleBuffer) -> Void)?
     var onError: ((String) -> Void)?
 
-    private let sessionQueue = DispatchQueue(label: "com.universalcam.camera.session", qos: .userInteractive)
+    let sessionQueue = DispatchQueue(label: "com.universalcam.camera.session", qos: .userInteractive)
     private let videoOutput = AVCaptureVideoDataOutput()
     private var configured = false
     private var requestedWidth: Int32 = 1920
@@ -67,6 +67,7 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     func stop() {
+        turnTorchOff()
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.captureSession.isRunning { self.captureSession.stopRunning() }
@@ -74,11 +75,21 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
+    func pauseForScanner(completion: @escaping () -> Void) {
+        stop()
+        sessionQueue.async { DispatchQueue.main.async(execute: completion) }
+    }
+
     func configure(width: Int32, height: Int32, fps: Int32,
                    completion: @escaping (Result<CaptureConfiguration, Error>) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             do {
+                // Stop outside the configuration transaction. This also drains
+                // capture delivery on sessionQueue before replacing the format.
+                DiagnosticLog.write("Capture reconfiguration: stopping session")
+                if self.captureSession.isRunning { self.captureSession.stopRunning() }
+                DispatchQueue.main.async { self.isRunning = false }
                 if !self.configured { try self.setUp() }
                 self.requestedWidth = width
                 self.requestedHeight = height
@@ -90,6 +101,7 @@ final class CameraSession: NSObject, ObservableObject {
                 catch { result = .failure(error) }
                 self.captureSession.commitConfiguration()
                 self.setOutputOrientation()
+                DiagnosticLog.write("Capture reconfiguration: format committed")
                 DispatchQueue.main.async {
                     if case .success(let config) = result { self.configuration = config }
                     completion(result)
@@ -119,7 +131,7 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
-    private var currentDevice: AVCaptureDevice? {
+    var currentDevice: AVCaptureDevice? {
         captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first?.device
     }
 
@@ -191,6 +203,9 @@ final class CameraSession: NSObject, ObservableObject {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
         if captureSession.canSetSessionPreset(.inputPriority) { captureSession.sessionPreset = .inputPriority }
+        // Do not carry a locked 60 fps duration into a 30 fps-only format.
+        device.activeVideoMinFrameDuration = .invalid
+        device.activeVideoMaxFrameDuration = .invalid
         device.activeFormat = format
         let duration = CMTime(value: 1, timescale: actualFPS)
         device.activeVideoMinFrameDuration = duration
@@ -201,17 +216,21 @@ final class CameraSession: NSObject, ObservableObject {
 
     private func changeCamera(to device: AVCaptureDevice, completion: ((CameraInfo?) -> Void)?) {
         do {
+            DiagnosticLog.write("Camera switch: begin to=\(device.position == .front ? "front" : "back")")
+            if captureSession.isRunning { captureSession.stopRunning() }
+            DispatchQueue.main.async { self.isRunning = false }
             if !configured { try setUp() }
             let replacement = try AVCaptureDeviceInput(device: device)
             captureSession.beginConfiguration()
             let previous = captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first
-            if let previous { captureSession.removeInput(previous) }
+            if let previous { disableTorch(previous.device); captureSession.removeInput(previous) }
             guard captureSession.canAddInput(replacement) else {
                 if let previous { captureSession.addInput(previous) }
                 captureSession.commitConfiguration()
                 throw failure("Could not switch to this camera.")
             }
             captureSession.addInput(replacement)
+            DiagnosticLog.write("Camera switch: replacement input added; selecting format")
             let config: CaptureConfiguration
             do { config = try applyFormat(to: device) }
             catch {
@@ -221,13 +240,16 @@ final class CameraSession: NSObject, ObservableObject {
                 throw error
             }
             captureSession.commitConfiguration()
+            DiagnosticLog.write("Camera switch: format committed \(config.width)x\(config.height) @ \(config.fps)")
             setOutputOrientation()
+            DiagnosticLog.write("Camera switch: output connection configured")
             DispatchQueue.main.async {
                 self.currentCameraID = device.uniqueID
                 self.configuration = config
                 completion?(self.info(device))
             }
         } catch {
+            DiagnosticLog.write("Camera switch failed: \(error.localizedDescription)")
             report(error.localizedDescription)
             DispatchQueue.main.async { completion?(nil) }
         }
@@ -236,7 +258,7 @@ final class CameraSession: NSObject, ObservableObject {
     private func setOutputOrientation() {
         guard let connection = videoOutput.connection(with: .video) else { return }
         if connection.isVideoOrientationSupported { connection.videoOrientation = .landscapeRight }
-        if connection.isVideoMirroringSupported { connection.isVideoMirrored = false }
+        disableCaptureMirroring(on: connection)
     }
 
     private func info(_ device: AVCaptureDevice) -> CameraInfo {
@@ -261,6 +283,11 @@ final class CameraSession: NSObject, ObservableObject {
 }
 
 extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        DiagnosticLog.record(.captureDropped)
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         DiagnosticLog.record(.captured)

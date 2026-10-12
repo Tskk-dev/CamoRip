@@ -7,17 +7,22 @@ import UIKit
 /// and network IO each have their own serial queue.
 final class ConnectionManager: ObservableObject {
     enum State: Equatable { case idle, discovering, connected, streaming, error(String) }
-    enum TransportType: String { case usb = "USB" }
+    enum TransportType: String { case usb = "USB", wifi = "Wi-Fi" }
     @Published private(set) var state: State = .idle
     @Published private(set) var latencyMs = 0
     @Published private(set) var activeTransport: TransportType?
     @Published private(set) var usbListening = false
+    @Published private(set) var wirelessStatus = "Scan the QR code in CamoRip on your PC"
     @Published private(set) var wantsStreaming = false
     @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
-    weak var cameraSession: CameraSession?
+    weak var cameraSession: PhoneCapture?
 
-    private let transport = USBTransport()
-    private let encoder = VideoEncoder()
+    private let transport: PhoneTransport
+    private let encoder: PhoneEncoder
+    private let applicationIsActive: () -> Bool
+    private let cameraIsAuthorized: () -> Bool
+    private let setIdleTimerDisabled: (Bool) -> Void
+    private let enableTimers: Bool
     private var negotiated = false
     private var configuring = false
     private var startRequested = false
@@ -32,9 +37,22 @@ final class ConnectionManager: ObservableObject {
     private var lastPong = Date()
     private var backgroundObserver: NSObjectProtocol?
 
-    init() {
+    init(transport: PhoneTransport = AutomaticPhoneTransport(), encoder: PhoneEncoder = VideoEncoder(),
+         applicationIsActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
+         cameraIsAuthorized: @escaping () -> Bool = { AVCaptureDevice.authorizationStatus(for: .video) == .authorized },
+         setIdleTimerDisabled: @escaping (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
+         enableTimers: Bool = true) {
+        self.transport = transport
+        self.encoder = encoder
+        self.applicationIsActive = applicationIsActive
+        self.cameraIsAuthorized = cameraIsAuthorized
+        self.setIdleTimerDisabled = setIdleTimerDisabled
+        self.enableTimers = enableTimers
+        if let automatic = transport as? AutomaticPhoneTransport {
+            automatic.onWirelessStatus = { [weak self] message in self?.wirelessStatus = message }
+        }
         transport.onStateChange = { [weak self] state in
-            DiagnosticLog.write("USB state: \(String(describing: state))")
+            DiagnosticLog.write("Transport state: \(String(describing: state))")
             DispatchQueue.main.async { self?.transportChanged(state) }
         }
         transport.onControlMessage = { [weak self] data in
@@ -65,6 +83,12 @@ final class ConnectionManager: ObservableObject {
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     }
 
+    func pairWirelessly(code: String) throws {
+        guard let automatic = transport as? AutomaticPhoneTransport else { return }
+        try automatic.pair(code: code)
+    }
+    func forgetWireless() { (transport as? AutomaticPhoneTransport)?.forgetWireless() }
+
     func startDiscovery() {
         if activeTransport == nil { state = .discovering }
         transport.startListening()
@@ -78,12 +102,12 @@ final class ConnectionManager: ObservableObject {
     /// Called by the phone's Start button or a Windows start_stream request.
     /// The callback waits for capture configuration before enabling frame delivery.
     func startStreaming(notifyPeer: Bool = true) {
-        guard activeTransport == .usb else { return }
-        guard UIApplication.shared.applicationState == .active else {
+        guard activeTransport != nil else { return }
+        guard applicationIsActive() else {
             fail(code: "app_in_background", message: "Open UniversalCam on the iPhone to start video.")
             return
         }
-        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+        guard cameraIsAuthorized() else {
             fail(code: "camera_denied", message: "Enable Camera permission in iPhone Settings."); return
         }
         wantsStreaming = true
@@ -99,22 +123,23 @@ final class ConnectionManager: ObservableObject {
         cameraSession?.start()
         encoder.requestKeyframe()
         streamingLock.lock(); streamingForCapture = true; streamingLock.unlock()
-        UIApplication.shared.isIdleTimerDisabled = true
+        setIdleTimerDisabled(true)
         state = .streaming
-        DiagnosticLog.write("Stream started: \(formatLabel), bitrate=\(bitrate)")
+        DiagnosticLog.write("Stream started over \(activeTransport?.rawValue ?? "local"): \(formatLabel), bitrate=\(bitrate)")
         _ = DiagnosticLog.takeMetrics() // Exclude camera preview frames captured before streaming.
         startMetricsLogging()
         if notifyPeer { transport.sendControl(.startStream) }
     }
 
     func stopStreaming(notifyPeer: Bool = true) {
+        cameraSession?.turnTorchOff()
         startRequested = false
         pendingStartNotifiesPeer = false
         wantsStreaming = false
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         // Stop accepting raw frames before flushing the old compression session.
-        if activeTransport == .usb { state = .connected }
-        UIApplication.shared.isIdleTimerDisabled = false
+        if activeTransport != nil { state = .connected }
+        setIdleTimerDisabled(false)
         encoder.flush()
         metricsTimer?.invalidate()
         metricsTimer = nil
@@ -124,17 +149,19 @@ final class ConnectionManager: ObservableObject {
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
         streamingLock.lock()
-        let isStreaming = streamingForCapture
-        streamingLock.unlock()
-        if isStreaming { encoder.encode(sample) }
+        defer { streamingLock.unlock() }
+        // Enqueue atomically with the gate check, so invalidation cannot be
+        // followed by a late old-mode sample that passed the check earlier.
+        if streamingForCapture { encoder.encode(sample) }
     }
 
     func cameraFailed(_ message: String) { fail(code: "camera_unavailable", message: message) }
 
     func switchCamera(cameraID: String? = nil) {
         guard let camera = cameraSession else { return }
-        let wasStreaming = state == .streaming
-        if wasStreaming { state = .connected }
+        let resume = wantsStreaming
+        stopStreaming(notifyPeer: false)
+        wantsStreaming = resume
         configuring = true
         operationGeneration += 1
         let generation = handshakeGeneration
@@ -142,24 +169,32 @@ final class ConnectionManager: ObservableObject {
         let completion: (CameraInfo?) -> Void = { [weak self] info in
             guard let self, generation == self.handshakeGeneration,
                   operation == self.operationGeneration else { return }
-            self.configuring = false
             guard let info, let config = camera.configuration else {
                 self.fail(code: "camera_switch_failed", message: "Could not switch camera."); return
             }
-            self.prepareEncoder(config)
-            if self.activeTransport != nil {
-                self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
-                self.transport.sendControl(.switchCameraAck(cameraID: info.id, cameraName: info.name))
-            }
-            if self.wantsStreaming || self.startRequested {
-                let notify = self.pendingStartNotifiesPeer
-                self.startRequested = false
-                self.pendingStartNotifiesPeer = false
-                self.startStreaming(notifyPeer: notify)
+            self.prepareEncoder(config) { [weak self] in
+                guard let self, generation == self.handshakeGeneration,
+                      operation == self.operationGeneration else { return }
+                self.configuring = false
+                if self.activeTransport != nil {
+                    self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
+                    self.transport.sendControl(.switchCameraAck(cameraID: info.id, cameraName: info.name))
+                    self.sendCameraState()
+                }
+                if self.wantsStreaming || self.startRequested {
+                    let notify = self.pendingStartNotifiesPeer
+                    self.startRequested = false
+                    self.pendingStartNotifiesPeer = false
+                    self.startStreaming(notifyPeer: notify)
+                }
             }
         }
-        if let cameraID { camera.switchToCamera(withID: cameraID, completion: completion) }
-        else { camera.switchCamera(completion: completion) }
+        encoder.invalidate { [weak self] in
+            guard let self, generation == self.handshakeGeneration,
+                  operation == self.operationGeneration else { return }
+            if let cameraID { camera.switchToCamera(withID: cameraID, completion: completion) }
+            else { camera.switchCamera(completion: completion) }
+        }
     }
 
     private func transportChanged(_ state: USBTransport.USBConnectionState) {
@@ -169,7 +204,7 @@ final class ConnectionManager: ObservableObject {
             if activeTransport == nil { self.state = .discovering }
         case .connected:
             resetSession()
-            activeTransport = .usb
+            activeTransport = transport.connectionKind
             self.state = .connected
             // Windows initiates the existing welcome -> hello -> configure handshake.
             startHeartbeat()
@@ -187,6 +222,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func resetSession() {
+        cameraSession?.turnTorchOff()
         handshakeGeneration += 1
         operationGeneration += 1
         negotiated = false
@@ -195,14 +231,14 @@ final class ConnectionManager: ObservableObject {
         pendingStartNotifiesPeer = false
         wantsStreaming = false
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
-        UIApplication.shared.isIdleTimerDisabled = false
+        setIdleTimerDisabled(false)
         encoder.invalidate()
         pingTimer?.invalidate()
         pingTimer = nil
         latencyMs = 0
         metricsTimer?.invalidate()
         metricsTimer = nil
-        DiagnosticLog.write("USB session reset")
+        DiagnosticLog.write("Camera session reset")
     }
 
     private func receive(_ data: Data) {
@@ -211,17 +247,18 @@ final class ConnectionManager: ObservableObject {
         }
         switch message {
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
-        case .configure(let resolution, let fps, let codec, let requestedBitrate):
+            sendCameraState()
+        case .configure(let resolution, let fps, let codec, let requestedBitrate, let requestID):
             let dimensions = resolution.split(separator: "x")
             guard codec.lowercased() == "h264", dimensions.count == 2,
                   let width = Int32(dimensions[0]), let height = Int32(dimensions[1]),
-                  (640...1920).contains(width), (360...1080).contains(height),
-                  (15...60).contains(fps), (500_000...20_000_000).contains(requestedBitrate),
+                  (640...3840).contains(width), (360...2160).contains(height), width % 2 == 0, height % 2 == 0,
+                  (15...60).contains(fps), CaptureEncodingLimits.bitrateRange.contains(requestedBitrate),
                   let camera = cameraSession else {
-                fail(code: "unsupported_configuration", message: "Use H.264, up to 1920x1080 at 15–60 fps."); return
+                fail(code: "unsupported_configuration", message: "Use H.264, up to 3840x2160 at 15–60 fps and 0.5–50 Mbps."); return
             }
             stopStreaming(notifyPeer: false)
             configuring = true
@@ -230,25 +267,34 @@ final class ConnectionManager: ObservableObject {
             bitrate = requestedBitrate
             let generation = handshakeGeneration
             let operation = operationGeneration
-            camera.configure(width: width, height: height, fps: Int32(fps)) { [weak self] result in
+            DiagnosticLog.write("Reconfiguring capture: \(resolution) @ \(fps) fps; draining old encoder")
+            encoder.invalidate { [weak self] in
                 guard let self, generation == self.handshakeGeneration,
                       operation == self.operationGeneration else { return }
-                self.configuring = false
-                switch result {
-                case .success(let config):
-                    self.prepareEncoder(config)
-                    self.negotiated = true
-                    self.state = .connected
-                    self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
-                    self.sendCameras()
-                    if self.startRequested {
-                        let notify = self.pendingStartNotifiesPeer
-                        self.startRequested = false
-                        self.pendingStartNotifiesPeer = false
-                        self.startStreaming(notifyPeer: notify)
+                camera.configure(width: width, height: height, fps: Int32(fps)) { [weak self] result in
+                    guard let self, generation == self.handshakeGeneration,
+                          operation == self.operationGeneration else { return }
+                    switch result {
+                    case .success(let config):
+                        self.prepareEncoder(config) { [weak self] in
+                            guard let self, generation == self.handshakeGeneration,
+                                  operation == self.operationGeneration else { return }
+                            self.configuring = false
+                            self.negotiated = true
+                            self.state = .connected
+                            self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps), requestID: requestID))
+                            self.sendCameras()
+                            self.sendCameraState()
+                            if self.startRequested {
+                                let notify = self.pendingStartNotifiesPeer
+                                self.startRequested = false
+                                self.pendingStartNotifiesPeer = false
+                                self.startStreaming(notifyPeer: notify)
+                            }
+                        }
+                    case .failure(let error):
+                        self.fail(code: "capture_configuration_failed", message: error.localizedDescription)
                     }
-                case .failure(let error):
-                    self.fail(code: "capture_configuration_failed", message: error.localizedDescription)
                 }
             }
         // Windows interprets these replies as accepted state acknowledgements;
@@ -256,6 +302,15 @@ final class ConnectionManager: ObservableObject {
         case .startStream: startStreaming()
         case .stopStream: stopStreaming()
         case .switchCamera(let id): switchCamera(cameraID: id)
+        case .getCameraState: sendCameraState()
+        case .cameraSettings(let request):
+            let generation = handshakeGeneration
+            let operation = operationGeneration
+            cameraSession?.applyControls(request, allowTorch: state == .streaming) { [weak self] snapshot in
+                guard let self, generation == self.handshakeGeneration, operation == self.operationGeneration,
+                      self.activeTransport == .usb else { return }
+                self.transport.sendControl(.cameraState(snapshot))
+            }
         case .listCameras: sendCameras()
         case .ping(let ts): transport.sendControl(.pong(ts: ts))
         case .pong(let ts):
@@ -268,16 +323,39 @@ final class ConnectionManager: ObservableObject {
         }
     }
 
-    private func prepareEncoder(_ config: CaptureConfiguration) {
-        encoder.prepare(width: config.width, height: config.height, fps: config.fps, bitrate: bitrate)
-        formatLabel = "\(config.width) × \(config.height) · \(config.fps) fps"
-        DiagnosticLog.write("Capture configured: \(config.width)x\(config.height) @ \(config.fps) fps")
+    private func prepareEncoder(_ config: CaptureConfiguration, completion: @escaping () -> Void) {
+        let generation = handshakeGeneration
+        let operation = operationGeneration
+        encoder.prepare(width: config.width, height: config.height, fps: config.fps, bitrate: bitrate) { [weak self] ready in
+            guard let self, generation == self.handshakeGeneration,
+                  operation == self.operationGeneration else { return }
+            guard ready else {
+                self.fail(code: "encoder_failed", message: "Could not prepare the encoder for this video mode.")
+                return
+            }
+            self.formatLabel = "\(config.width) × \(config.height) · \(config.fps) fps"
+            DiagnosticLog.write("Capture and encoder ready: \(config.width)x\(config.height) @ \(config.fps) fps")
+            completion()
+        }
     }
 
     private func startMetricsLogging() {
+        guard enableTimers else { return }
         metricsTimer?.invalidate()
         metricsTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
-            DiagnosticLog.write("METRIC " + DiagnosticLog.takeMetrics())
+            DiagnosticLog.write("METRIC " + DiagnosticLog.takeMetrics() +
+                " thermal=\(StreamingScreenDimmer.thermalName(ProcessInfo.processInfo.thermalState))" +
+                " brightness=\(String(format: "%.2f", Double(UIScreen.main.brightness)))")
+        }
+    }
+
+    private func sendCameraState() {
+        let generation = handshakeGeneration
+        let operation = operationGeneration
+        cameraSession?.readControls { [weak self] state in
+            guard let self, generation == self.handshakeGeneration, operation == self.operationGeneration,
+                  self.activeTransport == .usb else { return }
+            self.transport.sendControl(.cameraState(state))
         }
     }
 
@@ -298,11 +376,13 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func startHeartbeat() {
+        guard enableTimers else { return }
         lastPong = Date()
         pingTimer?.invalidate()
         pingTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let self else { return }
             if Date().timeIntervalSince(self.lastPong) > 10 { self.transport.disconnect(); return }
+            self.sendCameraState()
             self.transport.sendControl(.ping(ts: Int64(Date().timeIntervalSince1970 * 1000)))
         }
     }
@@ -312,8 +392,11 @@ final class ConnectionManager: ObservableObject {
 enum ControlMessage: Codable {
     case hello(deviceName: String, capabilities: [String])
     case welcome
-    case configure(resolution: String, fps: Int, codec: String, bitrate: Int)
-    case configureAck(resolution: String, fps: Int)
+    case getCameraState
+    case cameraSettings(CameraControlRequest)
+    case cameraState(CameraControlState)
+    case configure(resolution: String, fps: Int, codec: String, bitrate: Int, requestID: Int64 = 0)
+    case configureAck(resolution: String, fps: Int, requestID: Int64 = 0)
     case startStream
     case stopStream
     case switchCamera(cameraID: String?)
@@ -327,6 +410,7 @@ enum ControlMessage: Codable {
     case orientationChanged(orientation: String)
 
     private enum CodingKeys: String, CodingKey {
+        case request_id, camera_id, values, error, torch_available, torch_on, auto_exposure_supported, auto_focus_supported, auto_white_balance_supported, ranges
         case type, deviceName, capabilities, resolution, fps, codec, bitrate, ts
         case cameraID, cameraName, cameras, currentCameraID
         case orientation
@@ -335,6 +419,9 @@ enum ControlMessage: Codable {
 
     var type: String {
         switch self {
+        case .getCameraState:      return "get_camera_state"
+        case .cameraSettings:      return "camera_settings"
+        case .cameraState:         return "camera_state"
         case .hello:               return "hello"
         case .welcome:             return "welcome"
         case .configure:           return "configure"
@@ -359,17 +446,24 @@ enum ControlMessage: Codable {
         try container.encode(type, forKey: .type)
 
         switch self {
+        case .getCameraState: break
+        case .cameraSettings(let request):
+            try request.encode(to: encoder)
+        case .cameraState(let state):
+            try state.encode(to: encoder)
         case .hello(let deviceName, let capabilities):
             try container.encode(deviceName, forKey: .deviceName)
             try container.encode(capabilities, forKey: .capabilities)
         case .welcome:
             break
-        case .configure(let resolution, let fps, let codec, let bitrate):
+        case .configure(let resolution, let fps, let codec, let bitrate, let requestID):
+            try container.encode(requestID, forKey: .request_id)
             try container.encode(resolution, forKey: .resolution)
             try container.encode(fps, forKey: .fps)
             try container.encode(codec, forKey: .codec)
             try container.encode(bitrate, forKey: .bitrate)
-        case .configureAck(let resolution, let fps):
+        case .configureAck(let resolution, let fps, let requestID):
+            try container.encode(requestID, forKey: .request_id)
             try container.encode(resolution, forKey: .resolution)
             try container.encode(fps, forKey: .fps)
         case .startStream, .stopStream, .listCameras:
@@ -397,6 +491,9 @@ enum ControlMessage: Codable {
         let type = try container.decode(String.self, forKey: .type)
 
         switch type {
+        case "get_camera_state": self = .getCameraState
+        case "camera_settings": self = .cameraSettings(try CameraControlRequest(from: decoder))
+        case "camera_state": self = .cameraState(try CameraControlState(from: decoder))
         case "hello":
             let deviceName = try container.decode(String.self, forKey: .deviceName)
             let capabilities = try container.decode([String].self, forKey: .capabilities)
@@ -408,11 +505,11 @@ enum ControlMessage: Codable {
             let fps = try container.decode(Int.self, forKey: .fps)
             let codec = try container.decode(String.self, forKey: .codec)
             let bitrate = try container.decode(Int.self, forKey: .bitrate)
-            self = .configure(resolution: resolution, fps: fps, codec: codec, bitrate: bitrate)
+            self = .configure(resolution: resolution, fps: fps, codec: codec, bitrate: bitrate, requestID: try container.decodeIfPresent(Int64.self, forKey: .request_id) ?? 0)
         case "configure_ack":
             let resolution = try container.decode(String.self, forKey: .resolution)
             let fps = try container.decode(Int.self, forKey: .fps)
-            self = .configureAck(resolution: resolution, fps: fps)
+            self = .configureAck(resolution: resolution, fps: fps, requestID: try container.decodeIfPresent(Int64.self, forKey: .request_id) ?? 0)
         case "start_stream":
             self = .startStream
         case "stop_stream":

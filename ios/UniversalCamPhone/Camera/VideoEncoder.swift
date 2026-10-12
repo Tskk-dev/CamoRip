@@ -24,7 +24,7 @@ final class VideoEncoder {
     // MARK: - Private (all accessed exclusively on encoderQueue)
 
     private var session:      VTCompressionSession?
-    private let encoderQueue  = DispatchQueue(label: "com.universalcam.videoencoder")
+    private let encoderQueue  = DispatchQueue(label: "com.universalcam.videoencoder", qos: .userInitiated)
     private var frameCount    = 0
     private let pendingLock = NSLock()
     private var pendingFrames = 0
@@ -36,9 +36,13 @@ final class VideoEncoder {
 
     // MARK: - Lifecycle
 
-    func prepare(width: Int32, height: Int32, fps: Int32 = 60, bitrate: Int = 12_000_000) {
+    func prepare(width: Int32, height: Int32, fps: Int32 = 60, bitrate: Int = 12_000_000,
+                 completion: @escaping (Bool) -> Void) {
         encoderQueue.async { [weak self] in
-            self?.createSession(width: width, height: height, fps: fps, bitrate: bitrate)
+            guard let self else { return }
+            self.createSession(width: width, height: height, fps: fps, bitrate: bitrate)
+            let ready = self.session != nil
+            DispatchQueue.main.async { completion(ready) }
         }
     }
 
@@ -77,11 +81,14 @@ final class VideoEncoder {
         }
     }
 
-    func invalidate() {
+    func invalidate(completion: (() -> Void)? = nil) {
         encoderQueue.async { [weak self] in
-            guard let self, let session = self.session else { return }
-            VTCompressionSessionInvalidate(session)
-            self.session = nil
+            if let self, let session = self.session {
+                VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+                VTCompressionSessionInvalidate(session)
+                self.session = nil
+            }
+            if let completion { DispatchQueue.main.async(execute: completion) }
         }
     }
 
@@ -96,14 +103,15 @@ final class VideoEncoder {
     private func encodeOnQueue(_ sampleBuffer: CMSampleBuffer) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // Adapt to the actual pixel buffer dimensions. The front camera may deliver
-        // portrait-oriented buffers (e.g. 1080×1920) even when the session preset
-        // is hd1920x1080, because videoRotationAngle is metadata-only on some configs.
-        // Feeding mismatched buffers to a landscape VTCompressionSession squishes the image.
+        // Only encode the negotiated dimensions. Capture can still deliver old
+        // buffers around a format transition; they must not change the session.
         let bufW = Int32(CVPixelBufferGetWidth(pixelBuffer))
         let bufH = Int32(CVPixelBufferGetHeight(pixelBuffer))
         if session == nil || bufW != lastWidth || bufH != lastHeight {
-            createSession(width: bufW, height: bufH, fps: lastFPS, bitrate: lastBitrate)
+            // A late capture buffer from the previous mode must never rebuild
+            // the encoder back to the old dimensions after negotiation.
+            DiagnosticLog.record(.encodeDropped)
+            return
         }
 
         guard let session else { return }
@@ -172,22 +180,45 @@ final class VideoEncoder {
         }
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime,          value: kCFBooleanTrue)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        // Main profile supports CABAC for better compression (Baseline does not)
-        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,      value: kVTProfileLevel_H264_Main_AutoLevel)
-        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate,    value: NSNumber(value: bitrate))
+        // High profile supports CABAC and the negotiated 4K modes.
+        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,      value: kVTProfileLevel_H264_High_AutoLevel)
+        let bitrateStatus = VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: bitrate))
+        guard bitrateStatus == noErr else {
+            VTCompressionSessionInvalidate(s)
+            onError?(NSError(domain: NSOSStatusErrorDomain, code: Int(bitrateStatus)))
+            return
+        }
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: fps * 2))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_H264EntropyMode,   value: kVTH264EntropyMode_CABAC)
         // Set data rate limits: [bytes per second, period in seconds]
         let dataRateLimit = [Double(bitrate) / 8.0 * 1.5, 1.0] as CFArray
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_DataRateLimits, value: dataRateLimit)
-        let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(s)
+        // RealTime and disabled B-frames do not themselves bound encoder delay.
+        // Older hardware can reject this optional property; preserve its working
+        // configuration and report that instead of pretending it was applied.
+        let delayStatus = VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: NSNumber(value: 1))
+        var prepareStatus = VTCompressionSessionPrepareToEncodeFrames(s)
+        var boundedDelay = delayStatus == noErr
+        if prepareStatus != noErr && boundedDelay {
+            VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: NSNumber(value: kVTUnlimitedFrameDelayCount))
+            prepareStatus = VTCompressionSessionPrepareToEncodeFrames(s)
+            boundedDelay = false
+        }
         guard prepareStatus == noErr else {
             VTCompressionSessionInvalidate(s)
             onError?(NSError(domain: NSOSStatusErrorDomain, code: Int(prepareStatus)))
             return
         }
         self.session = s
+        var hardwareLabel = "unavailable to query before iOS 17.4"
+        if #available(iOS 17.4, *) {
+            var hardware: CFTypeRef?
+            let hardwareStatus = VTSessionCopyProperty(s, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+                allocator: nil, valueOut: &hardware)
+            hardwareLabel = (hardware as? Bool).map { $0 ? "true" : "false" } ?? "unknown (status \(hardwareStatus))"
+        }
+        DiagnosticLog.write("Encoder ready: H.264 High \(width)x\(height) @ \(fps), target=\(bitrate), hardware=\(hardwareLabel), maxFrameDelay=\(boundedDelay ? "1" : "default"), delayPropertyStatus=\(delayStatus)")
     }
 }
 
@@ -224,39 +255,29 @@ private func outputCallback(
     guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
     let totalLength = CMBlockBufferGetDataLength(dataBuffer)
     guard totalLength > 0 else { return }
-    // A CMBlockBuffer may have several noncontiguous memory blocks.
-    var avcc = Data(count: totalLength)
-    let copyStatus = avcc.withUnsafeMutableBytes { bytes -> OSStatus in
-        guard let address = bytes.baseAddress else { return -1 }
-        return CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: address)
-    }
-    guard copyStatus == kCMBlockBufferNoErr else { return }
-
-    // Convert AVCC (length-prefixed) to Annex B (start-code prefixed)
-    var annexB = Data()
-
-    // Prepend SPS/PPS for keyframes
-    if isKeyframe, let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
-        annexB.append(annexBParameterSets(from: formatDesc))
-    }
-
-    var offset = 0
-    while offset + 4 <= totalLength {
-        // Read 4-byte AVCC length prefix (big-endian)
-        var nalLength: UInt32 = 0
-        _ = withUnsafeMutableBytes(of: &nalLength) { bytes in
-            avcc.copyBytes(to: bytes, from: offset..<(offset + 4))
+    // Usually VideoToolbox gives contiguous AVCC bytes. Read them in place;
+    // retain a copy only for the valid noncontiguous CMBlockBuffer case.
+    let parameterSets: Data
+    if isKeyframe, let format = CMSampleBufferGetFormatDescription(sampleBuffer) {
+        parameterSets = annexBParameterSets(from: format)
+    } else { parameterSets = Data() }
+    var contiguousLength = 0
+    var pointer: UnsafeMutablePointer<Int8>?
+    let pointerStatus = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0,
+        lengthAtOffsetOut: &contiguousLength, totalLengthOut: nil, dataPointerOut: &pointer)
+    let annexB: Data?
+    if pointerStatus == kCMBlockBufferNoErr, contiguousLength >= totalLength, let pointer {
+        annexB = makeAnnexB(UnsafeRawBufferPointer(start: pointer, count: totalLength), parameterSets: parameterSets)
+    } else {
+        var avcc = Data(count: totalLength)
+        let copyStatus = avcc.withUnsafeMutableBytes { bytes -> OSStatus in
+            guard let address = bytes.baseAddress else { return -1 }
+            return CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: address)
         }
-        nalLength = CFSwapInt32BigToHost(nalLength)
-        offset += 4
-        guard nalLength > 0, Int(nalLength) <= totalLength - offset else { return }
-        // Write Annex B start code
-        annexB.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
-        annexB.append(avcc.subdata(in: offset..<(offset + Int(nalLength))))
-        offset += Int(nalLength)
+        guard copyStatus == kCMBlockBufferNoErr else { return }
+        annexB = avcc.withUnsafeBytes { makeAnnexB($0, parameterSets: parameterSets) }
     }
-
-    guard offset == totalLength, !annexB.isEmpty else { return }
+    guard let annexB, !annexB.isEmpty else { return }
     let timestamp = CMTimeConvertScale(CMSampleBufferGetPresentationTimeStamp(sampleBuffer), timescale: 1_000_000, method: .default)
     guard timestamp.isValid else { return }
     let ptsUs = timestamp.value

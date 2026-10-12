@@ -1,10 +1,14 @@
 import Foundation
 import Network
+import Security
+import CryptoKit
 
-/// Accepts the Windows usbmux tunnel on the phone's loopback address only.
-/// usbmux connects to a listening localhost socket on the iPhone; there is no
-/// Bonjour service, Wi-Fi listener, or outbound network connection.
+/// Framed camera transport. USB listens on loopback for usbmux. Wireless
+/// instances connect outbound to a QR-pinned, authenticated local TLS receiver.
 final class USBTransport {
+    private let wireless: Bool
+    var connectionKind: ConnectionManager.TransportType { wireless ? .wifi : .usb }
+    init(wireless: Bool = false) { self.wireless = wireless }
     static let port: UInt16 = 7780
     enum USBConnectionState: Equatable {
         case listening, connected, disconnected, failed(String)
@@ -58,22 +62,51 @@ final class USBTransport {
         }
     }
 
-    private func accept(_ incoming: NWConnection) {
+    func connectWireless(_ peer: WirelessPeer, endpoint: NWEndpoint? = nil) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let tls = NWProtocolTLS.Options()
+            sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, trust, complete in
+                let reference = sec_trust_copy_ref(trust).takeRetainedValue()
+                guard let certificate = SecTrustGetCertificateAtIndex(reference, 0) else { complete(false); return }
+                let bytes = SecCertificateCopyData(certificate) as Data
+                let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+                complete(digest == peer.fingerprint)
+            }, self.queue)
+            let tcp = NWProtocolTCP.Options(); tcp.noDelay = true
+            tcp.enableKeepalive = true; tcp.keepaliveIdle = 3; tcp.keepaliveInterval = 2; tcp.keepaliveCount = 3
+            let parameters = NWParameters(tls: tls, tcp: tcp)
+            parameters.requiredInterfaceType = .wifi
+            let target = endpoint ?? .hostPort(host: NWEndpoint.Host(peer.hosts[0]), port: NWEndpoint.Port(rawValue: peer.port)!)
+            let incoming = NWConnection(to: target, using: parameters)
+            self.accept(incoming, peer: peer)
+            self.queue.asyncAfter(deadline: .now() + 8) { [weak self, weak incoming] in
+                guard let self, let incoming, self.connection === incoming,
+                      self.wirelessAuthenticating else { return }
+                self.disconnect()
+            }
+        }
+    }
+
+    private var wirelessAuthenticating = false
+    private func accept(_ incoming: NWConnection, peer: WirelessPeer? = nil) {
         // Keep one controller; stale cancellation callbacks cannot clear a newer link.
         connection?.cancel()
         connection = incoming
         receiveBuffer.removeAll(keepingCapacity: true)
         videoSendsInFlight = 0
         waitingForKeyframe = true
+        wirelessAuthenticating = peer != nil
         incoming.stateUpdateHandler = { [weak self, weak incoming] state in
             guard let self, let incoming, self.connection === incoming else { return }
             switch state {
             case .ready:
+                if let peer { self.authenticate(incoming, peer: peer); return }
                 self.onStateChange?(.connected)
                 self.receiveLoop(incoming)
             case .failed(let error):
                 self.clear(incoming)
-                self.onStateChange?(.failed("USB connection interrupted: \(error.localizedDescription)"))
+                self.onStateChange?(.failed("\(self.connectionKind.rawValue) connection interrupted: \(error.localizedDescription)"))
             case .cancelled:
                 self.clear(incoming)
                 self.onStateChange?(.disconnected)
@@ -81,6 +114,44 @@ final class USBTransport {
             }
         }
         incoming.start(queue: queue)
+    }
+
+    private func authenticate(_ incoming: NWConnection, peer: WirelessPeer) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["v": 1, "pc": peer.id,
+            "token": peer.token, "pair": !peer.paired]) else { incoming.cancel(); return }
+        incoming.send(content: data + Data([10]), completion: .contentProcessed { [weak self, weak incoming] error in
+            guard let self, let incoming, self.connection === incoming else { return }
+            if error != nil { incoming.cancel(); return }
+            self.receiveAuthentication(incoming, peer: peer, accumulated: Data())
+        })
+    }
+    private func receiveAuthentication(_ incoming: NWConnection, peer: WirelessPeer, accumulated: Data) {
+        incoming.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self, weak incoming] data, _, complete, error in
+            guard let self, let incoming, self.connection === incoming else { return }
+            let bytes = accumulated + (data ?? Data())
+            guard bytes.count <= 8192, error == nil, (!complete || bytes.contains(10)) else { incoming.cancel(); return }
+            guard let newline = bytes.firstIndex(of: 10) else {
+                guard bytes.count < 4096 else { incoming.cancel(); return }
+                self.receiveAuthentication(incoming, peer: peer, accumulated: bytes); return
+            }
+            guard newline < 4096, let response = try? JSONSerialization.jsonObject(with: bytes.prefix(upTo: newline)) as? [String: Any],
+                  response["ok"] as? Bool == true else {
+                self.onStateChange?(.failed("Wireless pairing was rejected. Refresh the QR code on your PC."));
+                self.disconnect(); return
+            }
+            var saved = peer
+            if !peer.paired {
+                guard let token = response["token"] as? String, WirelessPeer.hex(token, count: 64) else { incoming.cancel(); return }
+                saved.token = token; saved.paired = true
+                do { try saved.save() }
+                catch { self.onStateChange?(.failed(error.localizedDescription)); self.disconnect(); return }
+            }
+            self.wirelessAuthenticating = false
+            self.onStateChange?(.connected)
+            self.receiveBuffer.append(bytes.suffix(from: bytes.index(after: newline)))
+            guard self.processReceiveBuffer() else { incoming.cancel(); return }
+            self.receiveLoop(incoming)
+        }
     }
 
     private func clear(_ incoming: NWConnection) {
@@ -176,7 +247,8 @@ final class USBTransport {
     }
 
     private func makeFramePacket(_ frame: VideoEncoder.EncodedFrame) -> Data {
-        var packet = Data([0x01])
+        var packet = Data(capacity: frame.data.count + 14)
+        packet.append(0x01)
         var length = UInt32(frame.data.count).littleEndian
         var pts = frame.ptsUs.littleEndian
         withUnsafeBytes(of: &length) { packet.append(contentsOf: $0) }

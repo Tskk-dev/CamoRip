@@ -7,7 +7,6 @@ namespace UniversalCam.Tests;
 
 public class FrameParserTests
 {
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// Build a valid 14-byte binary frame header + payload bytes.
     private static byte[] BuildBinaryFrame(byte streamType, byte[] payload, long ptsUs = 0, byte flags = 0)
@@ -32,7 +31,6 @@ public class FrameParserTests
         return frame;
     }
 
-    // ── Video frame ───────────────────────────────────────────────────────────
 
     [Fact]
     public void Feed_SingleVideoFrame_RaisesFrameParsed()
@@ -76,7 +74,6 @@ public class FrameParserTests
         Assert.Equal(fakeNal, frames[0].Payload);
     }
 
-    // ── Audio frame ───────────────────────────────────────────────────────────
 
     [Fact]
     public void Feed_AudioFrame_IsAudioTrueAndChannelsParsed()
@@ -95,7 +92,6 @@ public class FrameParserTests
         Assert.Equal(2, received.Header.Channels);
     }
 
-    // ── Control message ───────────────────────────────────────────────────────
 
     [Fact]
     public void Feed_WelcomeControlMessage_RaisesControlMessageParsed()
@@ -126,7 +122,6 @@ public class FrameParserTests
         Assert.Contains("h264", hello.Capabilities);
     }
 
-    // ── Unknown stream type ───────────────────────────────────────────────────
 
     [Fact]
     public void Feed_UnknownStreamTypeByte_SkipsAndDoesNotHang()
@@ -146,7 +141,6 @@ public class FrameParserTests
         Assert.Equal(1, events);
     }
 
-    // ── Multiple frames in one feed ───────────────────────────────────────────
 
     [Fact]
     public void Feed_TwoFramesInOneFeed_RaisesTwoEvents()

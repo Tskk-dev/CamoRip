@@ -1,63 +1,81 @@
 using System.IO;
-using System.Windows;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
+using UniversalCam.Views;
 
 namespace UniversalCam;
 
 public partial class App : Application
 {
     private Mutex? _instance;
-    private bool _ownsInstance;
-    private static StreamWriter? _log;
-    private static readonly string LogFilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalCam", "Logs", "latest.log");
-    internal static string LogDirectory => Path.GetDirectoryName(LogFilePath)!;
-
-    protected override void OnStartup(StartupEventArgs e)
+    private EventWaitHandle? _activate;
+    private RegisteredWaitHandle? _activationWait;
+    private MainWindow? _window;
+    private TrayIcon? _tray;
+    private bool _exiting;
+    private DispatcherQueueTimer? _startupCheckTimer;
+    private static readonly DiagnosticFileLog LogFile = new(LogDirectory);
+    private static DispatcherQueue? _dispatcher;
+    internal static AppSettings Settings { get; } = AppSettings.Load();
+    internal StreamingService Service { get; } = new();
+    internal static string LogDirectory => Path.Combine(AppSettings.DirectoryPath, "Logs");
+    public App() { InitializeComponent(); }
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _instance = new Mutex(true, "Local\\UniversalCam_USB_SingleInstance", out _ownsInstance);
-        if (!_ownsInstance)
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
+        var instanceName = AppSettings.StartupCheck ? "Local\\CamoRip_StartupCheck_" + Environment.ProcessId : AppSettings.Isolated ? "Local\\CamoRip_Prototype" : "Local\\UniversalCam_USB_SingleInstance";
+        _instance = new Mutex(true, instanceName, out var owns);
+        _activate = new EventWaitHandle(false, EventResetMode.AutoReset, AppSettings.Isolated ? instanceName + "_Activate" : "Local\\CamoRip_Activate");
+        if (!owns) { _activate.Set(); Exit(); return; }
+        SetLogging(Settings.Logging, rotate: true);
+        Log("INFO", $"CamoRip {typeof(App).Assembly.GetName().Version}; mode={(AppSettings.StartupCheck ? "startup check" : AppSettings.Isolated ? "prototype (USB disabled)" : "USB camera")}; executable={Environment.ProcessPath}");
+        UnhandledException += (_, e) => Log("FATAL", e.Exception.ToString());
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log("FATAL", e.ExceptionObject.ToString() ?? "Unhandled error");
+        TaskScheduler.UnobservedTaskException += (_, e) => Log(e.Exception);
+        _window = new MainWindow(this, Service);
+        _tray = new TrayIcon(WinRT.Interop.WindowNative.GetWindowHandle(_window))
         {
-            MessageBox.Show("USB iPhone Camera is already running.", "USB iPhone Camera");
-            Shutdown();
-            return;
-        }
-        try
+            Open = ShowWindow, ToggleStream = () => Run(Service.ToggleStreamAsync),
+            ToggleTorch = () => _window.ToggleTorch(), Exit = () => Run(ExitAsync)
+        };
+        Service.Changed += () => { _tray.Connected = Service.Connected; _tray.Streaming = Service.Streaming; if (!Service.Streaming) _tray.TorchAvailable = false; };
+        Service.Connection.CameraStateReceived += (_, state) => Ui(() =>
+        { _tray.Torch = state.TorchOn; _tray.TorchAvailable = state.TorchAvailable && Service.Streaming; });
+        Service.Connection.StateChanged += (_, _) => Ui(() => { if (!Service.Connected) _tray.TorchAvailable = _tray.Torch = false; });
+        _activationWait = ThreadPool.RegisterWaitForSingleObject(_activate, (_, _) => Ui(ShowWindow), null, Timeout.Infinite, false);
+        _window.Activate();
+        if (Settings.StartMinimized || Environment.GetCommandLineArgs().Contains("--minimized")) _window.HideToTray();
+        if (AppSettings.StartupCheck)
         {
-            Directory.CreateDirectory(LogDirectory);
-            // Preserve the last run when restarting after a crash or stall.
-            if (File.Exists(LogFilePath)) File.Copy(LogFilePath, Path.Combine(LogDirectory, "previous.log"), true);
-            _log = new StreamWriter(LogFilePath, false) { AutoFlush = true };
-            Log("INFO", $"Application started. OS={Environment.OSVersion}; Process={(Environment.Is64BitProcess ? "x64" : "x86")}");
+            _window.CheckControls();
+            Log("INFO", "Startup check passed: WinUI resources loaded.");
+            _startupCheckTimer = _dispatcher.CreateTimer();
+            _startupCheckTimer.Interval = TimeSpan.FromSeconds(1);
+            _startupCheckTimer.Tick += (_, _) => { _startupCheckTimer.Stop(); Run(ExitAsync); };
+            _startupCheckTimer.Start();
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
-            Log("FATAL", $"Unhandled exception (terminating={args.IsTerminating}): {args.ExceptionObject}");
-        DispatcherUnhandledException += (_, args) => Log("FATAL", $"UI exception: {args.Exception}");
-        TaskScheduler.UnobservedTaskException += (_, args) => Log("ERROR", $"Unobserved task exception: {args.Exception}");
-        base.OnStartup(e);
+        else if (!AppSettings.Isolated) Run(Service.StartAsync);
     }
-
+    internal void ShowWindow() { _window?.ShowFromTray(); }
+    internal async Task ExitAsync()
+    {
+        if (_exiting) return;
+        _exiting = true;
+        if (_window is not null) _window.PrepareExit();
+        try { await Service.DisposeAsync(); } catch (Exception ex) { Log(ex); }
+        _tray?.Dispose();
+        _activationWait?.Unregister(null);
+        _activate?.Dispose();
+        Log("INFO", "CamoRip exited.");
+        LogFile.Dispose();
+        _instance?.ReleaseMutex(); _instance?.Dispose();
+        _window?.Close();
+        Exit();
+    }
+    internal static void Ui(Action action) => _dispatcher?.TryEnqueue(() => { try { action(); } catch (Exception ex) { Log(ex); } });
+    internal static async void Run(Func<Task> work)
+    { try { await work(); } catch (Exception ex) { Log(ex); } }
+    internal static void SetLogging(bool enabled, bool rotate = false) => LogFile.SetEnabled(enabled, rotate);
     internal static void Log(Exception error) => Log("ERROR", error.ToString());
-
-    internal static void Log(string level, string message)
-    {
-        lock (typeof(App))
-        {
-            var line = $"{DateTimeOffset.Now:O} [{level}] {message}";
-            Console.Error.WriteLine(line);
-            try { _log?.WriteLine(line); }
-            catch (IOException) { }
-            catch (ObjectDisposedException) { }
-        }
-    }
-
-    protected override void OnExit(ExitEventArgs e)
-    {
-        Log("INFO", $"Application exited with code {e.ApplicationExitCode}.");
-        lock (typeof(App)) { _log?.Dispose(); _log = null; }
-        if (_ownsInstance) _instance?.ReleaseMutex();
-        _instance?.Dispose();
-        base.OnExit(e);
-    }
+    internal static void Log(string level, string message) => LogFile.Write(level, message);
 }

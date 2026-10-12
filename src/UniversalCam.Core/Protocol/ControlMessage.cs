@@ -14,7 +14,6 @@ public abstract record ControlMessage
     [JsonPropertyName("type")]
     public abstract string Type { get; }
 
-    // ── Serialization ────────────────────────────────────────────────────────
 
     private static readonly JsonSerializerOptions _options = new()
     {
@@ -34,6 +33,9 @@ public abstract record ControlMessage
         var type = doc.RootElement.GetProperty("type").GetString();
         return type switch
         {
+            "camera_state"      => doc.Deserialize<CameraState>(_options),
+            "camera_settings"   => doc.Deserialize<CameraSettings>(_options),
+            "get_camera_state"  => new GetCameraState(),
             "welcome"           => doc.Deserialize<Welcome>(_options),
             "hello"             => doc.Deserialize<Hello>(_options),
             "configure"         => doc.Deserialize<Configure>(_options),
@@ -53,7 +55,6 @@ public abstract record ControlMessage
     }
 }
 
-// ── PC → iPhone ──────────────────────────────────────────────────────────────
 
 /// Sent by PC immediately after the USB tunnel is established.
 public sealed record Welcome : ControlMessage
@@ -65,6 +66,7 @@ public sealed record Welcome : ControlMessage
 public sealed record Configure : ControlMessage
 {
     public override string Type => "configure";
+    public long RequestId { get; init; }
 
     [JsonPropertyName("resolution")]  public string Resolution { get; init; } = "1920x1080";
     [JsonPropertyName("fps")]         public int    Fps        { get; init; } = 60;
@@ -93,7 +95,6 @@ public sealed record Ping : ControlMessage
     [JsonPropertyName("ts")] public long Ts { get; init; }
 }
 
-// ── iPhone → PC ──────────────────────────────────────────────────────────────
 
 /// iPhone introduces itself after receiving Welcome.
 public sealed record Hello : ControlMessage
@@ -108,6 +109,7 @@ public sealed record Hello : ControlMessage
 public sealed record ConfigureAck : ControlMessage
 {
     public override string Type => "configure_ack";
+    public long RequestId { get; init; }
 
     [JsonPropertyName("resolution")] public string Resolution { get; init; } = string.Empty;
     [JsonPropertyName("fps")]        public int    Fps        { get; init; }
@@ -166,7 +168,6 @@ public sealed record ErrorMessage : ControlMessage
     [JsonPropertyName("message")] public string Message { get; init; } = string.Empty;
 }
 
-// ── Shared types ─────────────────────────────────────────────────────────────
 
 /// Describes a camera on the iPhone. Mirrors CameraInfo in CameraSession.swift.
 public sealed record CameraInfo
@@ -176,4 +177,35 @@ public sealed record CameraInfo
     [JsonPropertyName("position")]    public string Position   { get; init; } = string.Empty;
     [JsonPropertyName("type")]        public string Type       { get; init; } = string.Empty;
     [JsonPropertyName("zoom_factor")] public double ZoomFactor { get; init; } = 1.0;
+}
+
+public sealed record GetCameraState : ControlMessage { public override string Type => "get_camera_state"; }
+public sealed record CameraSettings : ControlMessage
+{
+    public override string Type => "camera_settings";
+    public long RequestId { get; init; }
+    public string CameraId { get; init; } = "";
+    public Dictionary<string, double> Values { get; init; } = new();
+}
+public sealed record ControlRange
+{
+    [JsonIgnore] public bool IsValid => double.IsFinite(Min) && double.IsFinite(Max) && Max >= Min;
+    public double Min { get; init; }
+    public double Max { get; init; }
+}
+public sealed record CameraState : ControlMessage
+{
+    public List<Video.VideoMode> CaptureModes { get; init; } = new();
+    public bool IsStaleComparedTo(long latestRequest) => RequestId > 0 && RequestId < latestRequest;
+    public override string Type => "camera_state";
+    public long RequestId { get; init; }
+    public string CameraId { get; init; } = "";
+    public string? Error { get; init; }
+    public bool TorchAvailable { get; init; }
+    public bool TorchOn { get; init; }
+    public bool AutoExposureSupported { get; init; }
+    public bool AutoFocusSupported { get; init; }
+    public bool AutoWhiteBalanceSupported { get; init; }
+    public Dictionary<string, ControlRange> Ranges { get; init; } = new();
+    public Dictionary<string, double> Values { get; init; } = new();
 }

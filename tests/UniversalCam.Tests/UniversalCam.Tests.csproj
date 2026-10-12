@@ -27,6 +27,8 @@
   <ItemGroup>
     <None Update="Fixtures/*.h264" CopyToOutputDirectory="PreserveNewest" />
     <Using Include="Xunit" />
+    <Compile Include="..\..\src\UniversalCam\DiagnosticFileLog.cs" Link="Desktop/DiagnosticFileLog.cs" />
+    <Compile Include="..\..\src\UniversalCam\AppSettings.cs" Link="Desktop/AppSettings.cs" />
     <None Include="..\..\artifacts\decoder\$(Configuration)\UniversalCam.Decoder.dll"
           Link="UniversalCam.Decoder.dll" CopyToOutputDirectory="PreserveNewest"
           Condition="Exists('..\..\artifacts\decoder\$(Configuration)\UniversalCam.Decoder.dll')" />

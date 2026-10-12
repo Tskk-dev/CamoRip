@@ -6,7 +6,80 @@ end_of_line = crlf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.{cs,xaml,csproj,sln,props,targets}]
+[*.cs]
+indent_style = space
+indent_size = 4
+csharp_new_line_before_open_brace = all
+dotnet_sort_system_directives_first = true
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+dotnet_style_qualification_for_event = false:warning
+dotnet_style_predefined_type_for_locals_parameters_members = true:warning
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+csharp_preferred_modifier_order = public,private,protected,internal,new,abstract,virtual,sealed,override,static,readonly,extern,unsafe,volatile,async:warning
+csharp_style_expression_bodied_accessors = true:warning
+csharp_style_expression_bodied_indexers = true:warning
+csharp_style_expression_bodied_properties = true:warning
+csharp_prefer_braces = true:warning
+
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+dotnet_naming_style.camel_case.capitalization = camel_case
+dotnet_naming_style.lower_snake_case.capitalization = all_lower
+dotnet_naming_style.lower_snake_case.word_separator = _
+dotnet_naming_style.upper_snake_case.capitalization = all_upper
+dotnet_naming_style.upper_snake_case.word_separator = _
+
+dotnet_naming_symbols.public_members.applicable_accessibilities = public,internal,protected,protected_internal,private_protected
+dotnet_naming_symbols.public_members.applicable_kinds = property,method,field,event
+dotnet_naming_rule.public_members_pascal_case.severity = warning
+dotnet_naming_rule.public_members_pascal_case.symbols = public_members
+dotnet_naming_rule.public_members_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.private_members.applicable_accessibilities = private
+dotnet_naming_symbols.private_members.applicable_kinds = property,method,field,event
+dotnet_naming_rule.private_members_camel_case.severity = warning
+dotnet_naming_rule.private_members_camel_case.symbols = private_members
+dotnet_naming_rule.private_members_camel_case.style = camel_case
+
+dotnet_naming_symbols.local_functions.applicable_kinds = local_function
+dotnet_naming_rule.local_functions_camel_case.severity = warning
+dotnet_naming_rule.local_functions_camel_case.symbols = local_functions
+dotnet_naming_rule.local_functions_camel_case.style = camel_case
+
+dotnet_naming_symbols.private_constants.applicable_accessibilities = private
+dotnet_naming_symbols.private_constants.required_modifiers = const
+dotnet_naming_symbols.private_constants.applicable_kinds = field
+dotnet_naming_rule.private_constants_lower_snake.severity = warning
+dotnet_naming_rule.private_constants_lower_snake.symbols = private_constants
+dotnet_naming_rule.private_constants_lower_snake.style = lower_snake_case
+
+dotnet_naming_symbols.private_static_readonly.applicable_accessibilities = private
+dotnet_naming_symbols.private_static_readonly.required_modifiers = static,readonly
+dotnet_naming_symbols.private_static_readonly.applicable_kinds = field
+dotnet_naming_rule.private_static_readonly_lower_snake.severity = warning
+dotnet_naming_rule.private_static_readonly_lower_snake.symbols = private_static_readonly
+dotnet_naming_rule.private_static_readonly_lower_snake.style = lower_snake_case
+
+dotnet_naming_symbols.public_constants.applicable_accessibilities = public,internal,protected,protected_internal,private_protected
+dotnet_naming_symbols.public_constants.required_modifiers = const
+dotnet_naming_symbols.public_constants.applicable_kinds = field
+dotnet_naming_rule.public_constants_upper_snake.severity = warning
+dotnet_naming_rule.public_constants_upper_snake.symbols = public_constants
+dotnet_naming_rule.public_constants_upper_snake.style = upper_snake_case
+
+dotnet_naming_symbols.public_static_readonly.applicable_accessibilities = public,internal,protected,protected_internal,private_protected
+dotnet_naming_symbols.public_static_readonly.required_modifiers = static,readonly
+dotnet_naming_symbols.public_static_readonly.applicable_kinds = field
+dotnet_naming_rule.public_static_readonly_upper_snake.severity = warning
+dotnet_naming_rule.public_static_readonly.symbols = public_static_readonly
+dotnet_naming_rule.public_static_readonly.style = upper_snake_case
+
+[*.{csproj,props,targets}]
+indent_style = space
+indent_size = 2
+
+[*.{xaml,sln}]
 indent_style = space
 indent_size = 4
 

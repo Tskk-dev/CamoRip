@@ -1,4 +1,4 @@
-name: Build webcam apps
+name: Build CamoRip
 
 on:
   push:
@@ -33,16 +33,16 @@ jobs:
             choco install innosetup --yes --no-progress
             if ($LASTEXITCODE) { throw 'Could not install Inno Setup.' }
           }
-          & $compiler installer/USB-iPhone-Camera.iss
+          & $compiler installer/CamoRip.iss
           if ($LASTEXITCODE) { throw 'Installer compilation failed.' }
       - uses: actions/upload-artifact@v4
         with:
-          name: usb-iphone-camera-windows-x64
+          name: camorip-windows-x64
           path: artifacts/installer/*.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-native-decoder-x64
+          name: camorip-native-decoder-x64
           path: artifacts/decoder/Release/UniversalCam.Decoder.dll
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
@@ -53,35 +53,68 @@ jobs:
           if-no-files-found: ignore
 
   ios:
+    name: iOS (${{ matrix.profile }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: Legacy
+            minimum_ios: '15.0'
+            minimum_major: 15
+            model: any
+            ipa: CamoRip-legacy-unsigned.ipa
+            artifact: camorip-ios-legacy-unsigned
+          - profile: Regular
+            minimum_ios: '18.0'
+            minimum_major: 18
+            model: any
+            ipa: CamoRip-regular-unsigned.ipa
+            artifact: camorip-ios-regular-unsigned
     runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Build unsigned iOS 15 app
+      - name: Build unsigned ${{ matrix.profile }} app
         working-directory: ios
         run: |
           set -euo pipefail
           xcodegen generate
-          xcodebuild -project UniversalCamPhone.xcodeproj \
-            -scheme UniversalCamPhone -configuration Release \
+          xcodebuild -project CamoRip.xcodeproj \
+            -scheme CamoRip -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath ../artifacts/ios \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+            IPHONEOS_DEPLOYMENT_TARGET=${{ matrix.minimum_ios }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Package and check unsigned IPA
         run: |
           set -euo pipefail
-          APP=artifacts/ios/Build/Products/Release-iphoneos/UniversalCam.app
+          APP=artifacts/ios/Build/Products/Release-iphoneos/CamoRip.app
           test -d "$APP"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '15.0'
-          xcrun lipo "$APP/UniversalCam" -verify_arch arm64
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '${{ matrix.minimum_ios }}'
+          xcrun lipo "$APP/CamoRip" -verify_arch arm64
           mkdir -p artifacts/ipa/Payload
           cp -R "$APP" artifacts/ipa/Payload/
-          (cd artifacts/ipa && zip -qr ../USB-iPhone-Camera-ios15-unsigned.ipa Payload)
-          unzip -t artifacts/USB-iPhone-Camera-ios15-unsigned.ipa
+          (cd artifacts/ipa && zip -qr ../${{ matrix.ipa }} Payload)
+          unzip -t artifacts/${{ matrix.ipa }}
+      - name: Check phone display lifecycle and video packet conversion
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          SIMULATOR=$(python3 ../scripts/select-ios-simulator.py --minimum-ios ${{ matrix.minimum_major }} --model '${{ matrix.model }}')
+          xcodebuild test -project CamoRip.xcodeproj -scheme CamoRip \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" \
+            -derivedDataPath ../artifacts/ios-tests \
+            -resultBundlePath ../artifacts/PhoneEfficiencyTests.xcresult \
+            IPHONEOS_DEPLOYMENT_TARGET=${{ matrix.minimum_ios }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results-${{ matrix.profile }}
+          path: artifacts/PhoneEfficiencyTests.xcresult
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
-          name: usb-iphone-camera-ios-unsigned
-          path: artifacts/USB-iPhone-Camera-ios15-unsigned.ipa
+          name: ${{ matrix.artifact }}
+          path: artifacts/${{ matrix.ipa }}
           if-no-files-found: error

@@ -1,4 +1,5 @@
 using System;
+using UniversalCam.Core.Video;
 using System.Runtime.InteropServices;
 
 namespace UniversalCam.VirtualCamera;
@@ -7,9 +8,9 @@ namespace UniversalCam.VirtualCamera;
 internal sealed class MfVirtualCameraServer : IDisposable
 {
     private IntPtr _camera;
-    public MfVirtualCameraServer(string framePath)
+    public MfVirtualCameraServer(string framePath, VideoMode mode)
     {
-        Marshal.ThrowExceptionForHR(CameraNative.UCamStartCamera(framePath, out _camera));
+        Marshal.ThrowExceptionForHR(CameraNative.UCamStartCameraMode(framePath, (uint)mode.Width, (uint)mode.Height, (uint)mode.Fps, out _camera));
     }
     public void Dispose()
     {

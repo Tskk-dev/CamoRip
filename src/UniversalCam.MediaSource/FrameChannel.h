@@ -23,6 +23,7 @@ inline constexpr size_t ChannelBytes = sizeof(ChannelHeader) + 2ull * FrameBytes
 inline constexpr ULONGLONG FrameHoldMs = 2500;
 
 class FrameReader {
+    NativeFormat format_;
     HANDLE file_ = INVALID_HANDLE_VALUE;
     HANDLE mapping_ = nullptr;
     const ChannelHeader* header_ = nullptr;
@@ -33,11 +34,13 @@ class FrameReader {
     LONG64 cachedSequence_ = -1;
 public:
     ~FrameReader();
+    void SetFormat(NativeFormat format) { format_ = format; CloseMapping(); cached_.clear(); lastOpenAttempt_ = 0; }
     void SetPath(std::wstring path) { path_ = std::move(path); }
     bool Read(BYTE* destination, ULONGLONG now = GetTickCount64());
 private:
     bool Open(ULONGLONG now);
     void CloseMapping();
     bool Repeat(BYTE* destination, ULONGLONG now);
+    size_t MappingBytes() const { return sizeof(ChannelHeader) + 2ull * format_.Bytes(); }
 };
 
