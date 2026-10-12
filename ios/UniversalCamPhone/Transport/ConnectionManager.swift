@@ -308,7 +308,7 @@ final class ConnectionManager: ObservableObject {
             let operation = operationGeneration
             cameraSession?.applyControls(request, allowTorch: state == .streaming) { [weak self] snapshot in
                 guard let self, generation == self.handshakeGeneration, operation == self.operationGeneration,
-                      self.activeTransport == .usb else { return }
+                      self.activeTransport != nil else { return }
                 self.transport.sendControl(.cameraState(snapshot))
             }
         case .listCameras: sendCameras()
@@ -354,7 +354,7 @@ final class ConnectionManager: ObservableObject {
         let operation = operationGeneration
         cameraSession?.readControls { [weak self] state in
             guard let self, generation == self.handshakeGeneration, operation == self.operationGeneration,
-                  self.activeTransport == .usb else { return }
+                  self.activeTransport != nil else { return }
             self.transport.sendControl(.cameraState(state))
         }
     }
