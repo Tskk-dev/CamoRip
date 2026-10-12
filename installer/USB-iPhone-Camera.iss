@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.3"
+  #define AppVersion "0.4.0"
 #endif
 #ifndef PublishDir
   #define PublishDir "..\artifacts\windows"
@@ -41,6 +41,10 @@ Name: "{autodesktop}\CamoRip"; Filename: "{app}\CamoRip.exe"; Tasks: desktopicon
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Run]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CamoRip Local Video"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CamoRip Local Discovery"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CamoRip Local Video"" dir=in action=allow program=""{app}\CamoRip.exe"" protocol=TCP localport=7781 profile=private remoteip=localsubnet"; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CamoRip Local Discovery"" dir=in action=allow program=""{app}\CamoRip.exe"" protocol=UDP localport=5353 profile=private remoteip=localsubnet"; Flags: runhidden
 Filename: "{app}\CamoRip.exe"; Description: "Open CamoRip"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [InstallDelete]
@@ -49,3 +53,7 @@ Type: files; Name: "{app}\UniversalCam.exe"
 Type: files; Name: "{autodesktop}\USB iPhone Camera.lnk"
 Type: files; Name: "{autoprograms}\USB iPhone Camera\USB iPhone Camera.lnk"
 Type: files; Name: "{autoprograms}\USB iPhone Camera\Uninstall USB iPhone Camera.lnk"
+
+[UninstallRun]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CamoRip Local Video"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CamoRip Local Discovery"""; Flags: runhidden

@@ -150,7 +150,7 @@ internal sealed class StreamingService : IAsyncDisposable
         {
             var connected = state == TransportState.Connected;
             Connected = connected; Changed?.Invoke();
-            SetStatus("DeviceStatus", connected ? $"{_connection.DeviceName} · USB connected" : "Waiting for iPhone over USB");
+            SetStatus("DeviceStatus", connected ? $"{_connection.DeviceName} · {_connection.ActiveTransport} connected" : "Connect an iPhone over USB or Wi-Fi");
             if (!connected)
             {
                 SetStreaming(false);
@@ -176,7 +176,7 @@ internal sealed class StreamingService : IAsyncDisposable
         void Ack(object? sender, ConfigureAck ack) => confirmed.TrySetResult(ack);
         void Failed(object? sender, string error) => confirmed.TrySetException(new IOException(error));
         void Disconnected(object? sender, TransportState state)
-        { if (state != TransportState.Connected) confirmed.TrySetException(new IOException("USB connection interrupted while changing video mode.")); }
+        { if (state != TransportState.Connected) confirmed.TrySetException(new IOException("Connection interrupted while changing video mode.")); }
         try
         {
             if (!Connected) throw new InvalidOperationException("Connect the iPhone before changing video mode.");
@@ -338,7 +338,7 @@ internal sealed class StreamingService : IAsyncDisposable
         var mbps = (bytes - _lastReceivedBytes) * 8.0 / seconds / 1_000_000;
         _lastReceivedBytes = bytes;
         var rtt = Volatile.Read(ref _controlRttMs);
-        var latency = $"{transit}; USB control RTT={(rtt < 0 ? "pending" : $"{rtt:F2}ms")}; H.264 actual={mbps:F2}Mbps target={AppliedBitrate / 1_000_000.0:F1}Mbps; excludes sensor/phone encoding, app buffering and display scanout";
+        var latency = $"{transit}; {_connection.ActiveTransport} control RTT={(rtt < 0 ? "pending" : $"{rtt:F2}ms")}; H.264 actual={mbps:F2}Mbps target={AppliedBitrate / 1_000_000.0:F1}Mbps; excludes sensor/phone encoding, app buffering and display scanout";
         process.Refresh();
         var cpuTime = process.TotalProcessorTime;
         var cpu = (cpuTime - _lastCpuTime).TotalSeconds / seconds / Environment.ProcessorCount * 100;
@@ -354,10 +354,10 @@ internal sealed class StreamingService : IAsyncDisposable
             _lastCollections[index] = current;
         }
         if (!_connection.IsStreaming) return;
-        var message = $"Pipeline fps: USB {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · preview {previewFps:F1} · queue drops {drops}";
+        var message = $"Pipeline fps: {_connection.ActiveTransport} {receivedFps:F1} · decoded {decodedFps:F1} · virtual camera {cameraFps:F1} · preview {previewFps:F1} · queue drops {drops}";
         Ui(() =>
         {
-            SetStatus("PerformanceStatus", $"{cameraFps:F0} fps · USB · {Volatile.Read(ref _decodedWidth)} × {Volatile.Read(ref _decodedHeight)}");
+            SetStatus("PerformanceStatus", $"{cameraFps:F0} fps · {_connection.ActiveTransport} · {Volatile.Read(ref _decodedWidth)} × {Volatile.Read(ref _decodedHeight)}");
             SetStatus("PerformanceDetails", message);
         });
         App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB; allocation={allocationRate:F1}MiB/s GC0/1/2={string.Join("/", collections)}");

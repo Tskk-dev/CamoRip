@@ -3,7 +3,7 @@ using UniversalCam.Core.Transport;
 
 namespace UniversalCam.Core;
 
-/// <summary>USB-only handshake and video streaming state for the Windows companion.</summary>
+/// <summary>Local USB/Wi-Fi handshake and video streaming state for the Windows companion.</summary>
 public sealed class ConnectionManager : IAsyncDisposable
 {
     public event EventHandler<string>? Failure;
@@ -29,7 +29,8 @@ public sealed class ConnectionManager : IAsyncDisposable
     public string CaptureResolution { get; private set; } = string.Empty;
     public int CaptureFrameRate { get; private set; }
 
-    private readonly TcpUsbTransport _usb;
+    private readonly IConnectionTransport _usb;
+    public WirelessTransport? Wireless => (_usb as AutomaticTransport)?.Wireless;
     private bool _started;
     private bool _disposed;
     private volatile bool _desiredStreaming = true;
@@ -42,16 +43,16 @@ public sealed class ConnectionManager : IAsyncDisposable
     private long _configurationRequestId;
     private long _pingToken, _pingSentTicks;
 
-    public ConnectionManager() : this(new TcpUsbTransport()) { }
+    public ConnectionManager() : this(new AutomaticTransport(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalCam"))) { }
 
-    public ConnectionManager(TcpUsbTransport transport)
+    public ConnectionManager(IConnectionTransport transport)
     {
         _usb = transport ?? throw new ArgumentNullException(nameof(transport));
         _usb.Diagnostic += (_, message) => Report(message);
         _usb.StateChanged += (_, state) => OnTransportStateChanged(state);
         _usb.FrameReceived += (_, frame) =>
         {
-            if (ActiveTransport == TransportType.USB && IsStreaming && frame.IsVideo)
+            if (ActiveTransport != TransportType.None && IsStreaming && frame.IsVideo)
                 FrameReceived?.Invoke(this, frame);
         };
         _usb.ControlMessageReceived += (_, message) => OnControlMessage(message);
@@ -73,7 +74,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         if (Video.VideoMode.Parse(resolution, fps) is null) throw new ArgumentException("Choose a valid NV12 capture mode up to 4K.", nameof(resolution));
         if (bitrate is < Video.VideoBitrate.Minimum or > Video.VideoBitrate.Maximum) throw new ArgumentOutOfRangeException(nameof(bitrate));
         if (bitrate > 20_000_000 && !SupportsBitrateControl) throw new InvalidOperationException("Update the iPhone app to use bitrates above 20 Mbps.");
-        if (ActiveTransport != TransportType.USB) return Task.CompletedTask;
+        if (ActiveTransport == TransportType.None) return Task.CompletedTask;
         _configurationGeneration = Volatile.Read(ref _generation);
         _configurationPending = true;
         _startAfterConfigure = _desiredStreaming;
@@ -106,7 +107,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     }
 
     private Task SendAsync(ControlMessage message, CancellationToken ct) =>
-        ActiveTransport == TransportType.USB ? _usb.SendControlForConnectionAsync(message, Volatile.Read(ref _transportGeneration), ct) : Task.CompletedTask;
+        ActiveTransport != TransportType.None ? _usb.SendControlForConnectionAsync(message, Volatile.Read(ref _transportGeneration), ct) : Task.CompletedTask;
 
     private void OnTransportStateChanged(TransportState state)
     {
@@ -147,7 +148,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             await _usb.SendControlForConnectionAsync(new Welcome(), transportGeneration);
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
-        { if (!_disposed) Report("USB handshake interrupted. Reconnecting to the iPhone."); }
+        { if (!_disposed) Report("Camera handshake interrupted. Reconnecting to the iPhone."); }
     }
 
     private void OnControlMessage(ControlMessage message)
@@ -166,13 +167,13 @@ public sealed class ConnectionManager : IAsyncDisposable
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
             _desiredStreaming = true;
-            ActiveTransport = TransportType.USB;
+            ActiveTransport = _usb.Kind;
             SetStreaming(false);
-            Report($"{DeviceName} connected over USB.");
+            Report($"{DeviceName} connected over {ActiveTransport}.");
             SetState(TransportState.Connected);
             return;
         }
-        if (ActiveTransport != TransportType.USB) return;
+        if (ActiveTransport == TransportType.None) return;
         switch (message)
         {
             case CameraState cameraState:
@@ -196,13 +197,13 @@ public sealed class ConnectionManager : IAsyncDisposable
             case StartStream:
                 _desiredStreaming = true;
                 SetStreaming(true);
-                Report($"Streaming {CaptureResolution} at {CaptureFrameRate} fps over USB.");
+                Report($"Streaming {CaptureResolution} at {CaptureFrameRate} fps over {ActiveTransport}.");
                 break;
             case StopStream:
                 _desiredStreaming = false;
                 _startAfterConfigure = false;
                 SetStreaming(false);
-                Report("Streaming stopped. The USB connection is ready.");
+                Report("Streaming stopped. The connection is ready.");
                 break;
             case ErrorMessage error:
                 Failure?.Invoke(this, error.Message);
@@ -243,7 +244,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             await _usb.SendControlForConnectionAsync(new StartStream(), transportGeneration);
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
-        { if (!_disposed) Report("USB connection interrupted before streaming could start."); }
+        { if (!_disposed) Report("Camera connection interrupted before streaming could start."); }
     }
 
     private async Task ReplyPongAsync(long timestamp)
@@ -283,5 +284,5 @@ public sealed class ConnectionManager : IAsyncDisposable
     }
 }
 
-// WiFi is retained as an enum value for source compatibility; no Wi-Fi transport is created.
+// Exactly one local transport is active at a time.
 public enum TransportType { None, WiFi, USB }

@@ -2,6 +2,8 @@
 
 ## Windows
 
+For Wi-Fi, follow [wireless pairing](WIRELESS.md). Apple device support is required for USB only. The installer adds app-specific, local-subnet firewall rules on Private networks for video (TCP 7781) and discovery (UDP 5353).
+
 Install Apple Devices or iTunes from Apple's supported distribution and connect the phone once. Confirm the Apple application can see it. Unlock the phone and accept Trust This Computer.
 
 Download the Windows artifact from a successful Actions run and run its setup executable. Administrator elevation installs and registers `UCamMediaSource.dll`; the companion itself runs as the signed-in user. Builds are not Authenticode-signed, so Windows may show an unknown-publisher prompt. Verify that the download is from this repository and commit.

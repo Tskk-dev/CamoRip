@@ -75,6 +75,11 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
+    func pauseForScanner(completion: @escaping () -> Void) {
+        stop()
+        sessionQueue.async { DispatchQueue.main.async(execute: completion) }
+    }
+
     func configure(width: Int32, height: Int32, fps: Int32,
                    completion: @escaping (Result<CaptureConfiguration, Error>) -> Void) {
         sessionQueue.async { [weak self] in

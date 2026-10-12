@@ -23,7 +23,8 @@
       <TextBlock x:Name="ControlStatus" Text="Connect a compatible iPhone app" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" AutomationProperties.LiveSetting="Polite" />
       <StackPanel x:Name="CameraPage" Spacing="16">
        <TextBlock Text="Camera" Style="{ThemeResource SubtitleTextBlockStyle}" />
-       <TextBlock x:Name="DeviceStatus" Text="Connect your iPhone over USB" TextWrapping="Wrap" />
+       <TextBlock x:Name="DeviceStatus" Text="Connect your iPhone over USB or Wi-Fi" TextWrapping="Wrap" />
+       <Button Content="Connect wirelessly" Click="OnWirelessPairing" HorizontalAlignment="Stretch" />
        <Button x:Name="StreamButton" Content="Start video" Click="OnToggleStream" IsEnabled="False" HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}" />
        <Button x:Name="SwitchCamera" Content="Switch camera" Click="OnSwitchCamera" IsEnabled="False" HorizontalAlignment="Stretch" />
        <ComboBox x:Name="CaptureMode" Header="Resolution and frame rate" SelectionChanged="OnCaptureMode" HorizontalAlignment="Stretch" IsEnabled="False" />
@@ -69,6 +70,7 @@
        <ToggleSwitch x:Name="StartMinimized" Header="Start in system tray" Toggled="OnSettings" />
        <ToggleSwitch x:Name="LaunchAtSignIn" Header="Launch at Windows sign-in" Toggled="OnSettings" />
        <ToggleSwitch x:Name="Logging" Header="Diagnostic logging" Toggled="OnSettings" />
+       <Button Content="Forget paired phones" Click="OnForgetWireless" HorizontalAlignment="Stretch" />
        <Button Content="Open logs" Click="OnOpenLogs" HorizontalAlignment="Stretch" />
        <Button Content="Exit CamoRip" Click="OnExit" HorizontalAlignment="Stretch" />
       </StackPanel>
@@ -81,7 +83,7 @@
     <Border x:Name="PreviewBorder" Background="Black" CornerRadius="12">
      <Grid>
       <SwapChainPanel x:Name="Preview" SizeChanged="OnPreviewSize" />
-      <TextBlock x:Name="Waiting" Text="Waiting for USB video" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="24" />
+      <TextBlock x:Name="Waiting" Text="Waiting for video" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="24" />
       <Button x:Name="FullscreenExit" Content="Exit fullscreen" Click="OnFullscreen" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12" Visibility="Collapsed" />
      </Grid>
     </Border>

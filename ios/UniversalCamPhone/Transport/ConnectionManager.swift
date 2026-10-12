@@ -7,11 +7,12 @@ import UIKit
 /// and network IO each have their own serial queue.
 final class ConnectionManager: ObservableObject {
     enum State: Equatable { case idle, discovering, connected, streaming, error(String) }
-    enum TransportType: String { case usb = "USB" }
+    enum TransportType: String { case usb = "USB", wifi = "Wi-Fi" }
     @Published private(set) var state: State = .idle
     @Published private(set) var latencyMs = 0
     @Published private(set) var activeTransport: TransportType?
     @Published private(set) var usbListening = false
+    @Published private(set) var wirelessStatus = "Scan the QR code in CamoRip on your PC"
     @Published private(set) var wantsStreaming = false
     @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
     weak var cameraSession: PhoneCapture?
@@ -36,7 +37,7 @@ final class ConnectionManager: ObservableObject {
     private var lastPong = Date()
     private var backgroundObserver: NSObjectProtocol?
 
-    init(transport: PhoneTransport = USBTransport(), encoder: PhoneEncoder = VideoEncoder(),
+    init(transport: PhoneTransport = AutomaticPhoneTransport(), encoder: PhoneEncoder = VideoEncoder(),
          applicationIsActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
          cameraIsAuthorized: @escaping () -> Bool = { AVCaptureDevice.authorizationStatus(for: .video) == .authorized },
          setIdleTimerDisabled: @escaping (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
@@ -47,8 +48,11 @@ final class ConnectionManager: ObservableObject {
         self.cameraIsAuthorized = cameraIsAuthorized
         self.setIdleTimerDisabled = setIdleTimerDisabled
         self.enableTimers = enableTimers
+        if let automatic = transport as? AutomaticPhoneTransport {
+            automatic.onWirelessStatus = { [weak self] message in self?.wirelessStatus = message }
+        }
         transport.onStateChange = { [weak self] state in
-            DiagnosticLog.write("USB state: \(String(describing: state))")
+            DiagnosticLog.write("Transport state: \(String(describing: state))")
             DispatchQueue.main.async { self?.transportChanged(state) }
         }
         transport.onControlMessage = { [weak self] data in
@@ -79,6 +83,12 @@ final class ConnectionManager: ObservableObject {
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     }
 
+    func pairWirelessly(code: String) throws {
+        guard let automatic = transport as? AutomaticPhoneTransport else { return }
+        try automatic.pair(code: code)
+    }
+    func forgetWireless() { (transport as? AutomaticPhoneTransport)?.forgetWireless() }
+
     func startDiscovery() {
         if activeTransport == nil { state = .discovering }
         transport.startListening()
@@ -92,7 +102,7 @@ final class ConnectionManager: ObservableObject {
     /// Called by the phone's Start button or a Windows start_stream request.
     /// The callback waits for capture configuration before enabling frame delivery.
     func startStreaming(notifyPeer: Bool = true) {
-        guard activeTransport == .usb else { return }
+        guard activeTransport != nil else { return }
         guard applicationIsActive() else {
             fail(code: "app_in_background", message: "Open UniversalCam on the iPhone to start video.")
             return
@@ -115,7 +125,7 @@ final class ConnectionManager: ObservableObject {
         streamingLock.lock(); streamingForCapture = true; streamingLock.unlock()
         setIdleTimerDisabled(true)
         state = .streaming
-        DiagnosticLog.write("Stream started: \(formatLabel), bitrate=\(bitrate)")
+        DiagnosticLog.write("Stream started over \(activeTransport?.rawValue ?? "local"): \(formatLabel), bitrate=\(bitrate)")
         _ = DiagnosticLog.takeMetrics() // Exclude camera preview frames captured before streaming.
         startMetricsLogging()
         if notifyPeer { transport.sendControl(.startStream) }
@@ -128,7 +138,7 @@ final class ConnectionManager: ObservableObject {
         wantsStreaming = false
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         // Stop accepting raw frames before flushing the old compression session.
-        if activeTransport == .usb { state = .connected }
+        if activeTransport != nil { state = .connected }
         setIdleTimerDisabled(false)
         encoder.flush()
         metricsTimer?.invalidate()
@@ -194,7 +204,7 @@ final class ConnectionManager: ObservableObject {
             if activeTransport == nil { self.state = .discovering }
         case .connected:
             resetSession()
-            activeTransport = .usb
+            activeTransport = transport.connectionKind
             self.state = .connected
             // Windows initiates the existing welcome -> hello -> configure handshake.
             startHeartbeat()
@@ -228,7 +238,7 @@ final class ConnectionManager: ObservableObject {
         latencyMs = 0
         metricsTimer?.invalidate()
         metricsTimer = nil
-        DiagnosticLog.write("USB session reset")
+        DiagnosticLog.write("Camera session reset")
     }
 
     private func receive(_ data: Data) {

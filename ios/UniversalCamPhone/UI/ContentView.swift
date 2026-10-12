@@ -11,8 +11,11 @@ struct ContentView: View {
     @AppStorage("dimStreamingScreen") private var dimStreamingScreen = true
     @StateObject private var screenDimmer = StreamingScreenDimmer()
 
+    @State private var showWirelessScanner = false
+    @State private var wirelessError: String?
+
     private var showPreview: Bool {
-        cameraAuthorized && scenePhase == .active && !screenDimmer.isDimmed &&
+        !showWirelessScanner && cameraAuthorized && scenePhase == .active && !screenDimmer.isDimmed &&
             (connection.state != .streaming || showStreamingPreview)
     }
 
@@ -53,7 +56,7 @@ struct ContentView: View {
                                     .font(.callout).foregroundStyle(.orange)
                             }
                             if connection.state == .streaming && connection.latencyMs > 0 {
-                                Text("USB latency: \(connection.latencyMs) ms").font(.caption)
+                                Text("Control latency: \(connection.latencyMs) ms").font(.caption)
                             }
                             HStack(spacing: 16) {
                                 Button {
@@ -73,6 +76,14 @@ struct ContentView: View {
                                 .buttonStyle(.bordered)
                                 .disabled(!camera.isRunning || camera.availableCameras.count < 2)
                             }
+                            Button {
+                                connection.stopStreaming()
+                                screenDimmer.update(enabled: false)
+                                camera.pauseForScanner { showWirelessScanner = true }
+                            } label: { Label("Connect wirelessly", systemImage: "qrcode.viewfinder") }
+                            .buttonStyle(.bordered)
+                            Text(connection.wirelessStatus).font(.caption).multilineTextAlignment(.center)
+                            Button("Forget paired PC") { connection.forgetWireless() }.font(.caption)
                             if case .error = connection.state {
                                 Button("Retry USB connection") {
                                     camera.start()
@@ -109,7 +120,7 @@ struct ContentView: View {
                         Color.black
                         VStack(spacing: 12) {
                             Image(systemName: "video.fill")
-                            Text("Streaming over USB")
+                            Text("Streaming over \(connection.activeTransport?.rawValue ?? "USB")")
                             Text("Tap to restore controls").font(.caption)
                         }.foregroundStyle(.gray)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -120,6 +131,21 @@ struct ContentView: View {
             }
         }
         .simultaneousGesture(TapGesture().onEnded { screenDimmer.userInteracted() })
+        .fullScreenCover(isPresented: $showWirelessScanner, onDismiss: { camera.start() }) {
+            WirelessScannerView { code in
+                do {
+                    try connection.pairWirelessly(code: code)
+                    showWirelessScanner = false
+                } catch {
+                    wirelessError = error.localizedDescription
+                    showWirelessScanner = false
+                }
+            } onCancel: { showWirelessScanner = false }
+            .interactiveDismissDisabled()
+        }
+        .alert("Wireless pairing", isPresented: Binding(get: { wirelessError != nil }, set: { if !$0 { wirelessError = nil } })) {
+            Button("OK") { wirelessError = nil }
+        } message: { Text(wirelessError ?? "") }
         .onAppear { updateScreenDimming() }
         .task { await checkPermission() }
         .onChange(of: scenePhase) { phase in
@@ -136,9 +162,9 @@ struct ContentView: View {
 
     private var status: String {
         switch connection.state {
-        case .idle, .discovering: return "Waiting for USB"
-        case .connected: return "USB connected"
-        case .streaming: return "Streaming over USB"
+        case .idle, .discovering: return "Waiting for PC"
+        case .connected: return "\(connection.activeTransport?.rawValue ?? "USB") connected"
+        case .streaming: return "Streaming over \(connection.activeTransport?.rawValue ?? "USB")"
         case .error: return "Connection needs attention"
         }
     }
@@ -146,7 +172,7 @@ struct ContentView: View {
     private var hint: String {
         switch connection.state {
         case .idle, .discovering:
-            return "Connect the cable, unlock and trust this PC, then open UniversalCam on Windows."
+            return "Connect the cable, unlock and trust this PC, then open CamoRip on Windows. Or scan its wireless pairing QR code."
         case .connected:
             return "Ready. Keep this app open and hold the phone sideways."
         case .streaming:
@@ -167,7 +193,7 @@ struct ContentView: View {
         else { granted = status == .authorized }
         cameraAuthorized = granted
         permissionChecked = true
-        if granted { camera.start(); connection.startDiscovery() }
+        if granted && !showWirelessScanner { camera.start(); connection.startDiscovery() }
         else { connection.stopStreaming(); camera.stop() }
     }
 }

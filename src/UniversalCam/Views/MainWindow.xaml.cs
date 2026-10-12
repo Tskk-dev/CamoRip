@@ -9,6 +9,49 @@ namespace UniversalCam.Views;
 
 public sealed partial class MainWindow : Window
 {
+    private async void OnWirelessPairing(object sender, RoutedEventArgs e)
+    {
+        var wireless = _service.Connection.Wireless;
+        if (wireless is null) return;
+        try
+        {
+            while (true)
+            {
+                string code = wireless.BeginPairing();
+                using var generator = new QRCoder.QRCodeGenerator();
+                using var data = generator.CreateQrCode(code, QRCoder.QRCodeGenerator.ECCLevel.M);
+                using var qr = new QRCoder.PngByteQRCode(data);
+                byte[] png = qr.GetGraphic(8);
+                using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+                using (var writer = new Windows.Storage.Streams.DataWriter(stream.GetOutputStreamAt(0)))
+                { writer.WriteBytes(png); await writer.StoreAsync(); }
+                stream.Seek(0);
+                var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+                await bitmap.SetSourceAsync(stream);
+                var content = new StackPanel { Spacing = 16 };
+                content.Children.Add(new TextBlock { Text = "On your iPhone, tap Connect wirelessly and scan this code. Keep both devices on the same local network.", TextWrapping = TextWrapping.Wrap });
+                content.Children.Add(new Border { Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    Padding = new Thickness(12), Child = new Image { Source = bitmap, Width = 320, Height = 320 } });
+                content.Children.Add(new TextBlock { Text = "This code expires in 5 minutes and works once. After pairing, reconnection is automatic. Allow CamoRip through the Windows firewall on Private networks.", TextWrapping = TextWrapping.Wrap });
+                var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Connect wirelessly", Content = content,
+                    PrimaryButtonText = "Refresh QR", CloseButtonText = "Done" };
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary) break;
+            }
+        }
+        catch (Exception ex) { ConnectionNotice.Message = "Wireless pairing: " + ex.Message; ConnectionNotice.IsOpen = true; }
+        finally { wireless.CancelPairing(); }
+    }
+    private async void OnForgetWireless(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Forget paired phones?",
+            Content = "Wireless phones will need to scan a new QR code. USB connections still work.",
+            PrimaryButtonText = "Forget", CloseButtonText = "Cancel" };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            try { _service.Connection.Wireless?.ForgetDevices(); }
+            catch (Exception ex) { ConnectionNotice.Message = ex.Message; ConnectionNotice.IsOpen = true; }
+        }
+    }
     private readonly App _app;
     private readonly StreamingService _service;
     private readonly Dictionary<string, double> _pending = new();

@@ -37,6 +37,7 @@ The iPhone app must stay open while streaming. A hidden preview or dimmed screen
 ## Documentation
 
 - [Installation and troubleshooting](docs/INSTALLATION.md)
+- [Wireless pairing](docs/WIRELESS.md)
 - [Desktop features and validation status](docs/CAMORIP.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Device validation checklist](docs/VALIDATION.md)

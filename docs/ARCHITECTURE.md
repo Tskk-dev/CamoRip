@@ -1,5 +1,7 @@
 # Architecture
 
+Version 0.4 also supports a paired local-network TLS connection on Windows TCP 7781. A short-lived QR pins the PC certificate and bootstraps a saved credential. Bonjour advertises `_camorip._tcp`; USB takes priority over wireless. Both paths use the same bounded H.264/control protocol and decoder. See [wireless pairing](WIRELESS.md).
+
 ```mermaid
 flowchart LR
     A[AVFoundation camera] --> B[VideoToolbox H.264]

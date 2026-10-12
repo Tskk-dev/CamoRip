@@ -27,3 +27,11 @@ the self-contained .NET runtime. Upstream source and notices are available at
 https://github.com/microsoft/WindowsAppSDK and https://github.com/microsoft/microsoft-ui-xaml.
 Preserve the license and notice files supplied in the published runtime package.
 The new preview renderer uses Windows D3D11, DXGI and D3DCompiler system components.
+
+## Wireless pairing libraries
+
+- [QRCoder](https://github.com/codebude/QRCoder) 1.8.0: MIT, copyright Raffael Herrmann.
+- [Makaretu.Dns.Multicast](https://github.com/richardschneider/net-mdns) 0.27.0: MIT, copyright Richard Schneider.
+- System.Security.Cryptography.ProtectedData 8.0.0: .NET MIT license.
+
+Package dependencies retain their own licenses and copyright notices. Refer to the license files in their NuGet packages.

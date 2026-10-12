@@ -55,12 +55,13 @@ Windows companion initiates a fresh handshake when the cable is reconnected.
 
 The listener binds IPv4 loopback explicitly using
 [`NWParameters.requiredLocalEndpoint`](https://developer.apple.com/documentation/network/nwparameters/requiredlocalendpoint).
-It does not bind Wi-Fi/cellular interfaces, advertise Bonjour, or open outbound
-sockets. [usbmuxd](https://cgit.libimobiledevice.org/usbmuxd.git/tree/README) supports
-connecting to listening localhost sockets on an iOS device. USB-only selection
-must also be enforced by the Windows companion. Video is unencrypted inside the
-local USB tunnel, so any trusted process that can access that phone can control
-the app; there is no Internet service or account.
+The USB listener does not bind Wi-Fi or cellular interfaces. The wireless client
+connects outbound over Wi-Fi to a QR-pinned local TLS receiver on the PC and
+browses its Bonjour service. See [wireless pairing](../docs/WIRELESS.md).
+[usbmuxd](https://cgit.libimobiledevice.org/usbmuxd.git/tree/README) connects to
+the phone's loopback socket for USB. Video is unencrypted inside the trusted
+USB tunnel; wireless video and controls are encrypted. There is no Internet
+service or account.
 
 Physical acceptance remains necessary: unsigned installer compatibility, denied
 camera permission and Settings recovery, front/rear switching, locking and

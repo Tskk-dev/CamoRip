@@ -34,6 +34,7 @@ extension PhoneEncoder {
 }
 
 protocol PhoneTransport: AnyObject {
+    var connectionKind: ConnectionManager.TransportType { get }
     var onControlMessage: ((Data) -> Void)? { get set }
     var onStateChange: ((USBTransport.USBConnectionState) -> Void)? { get set }
     var onVideoBackpressure: (() -> Void)? { get set }
@@ -42,6 +43,8 @@ protocol PhoneTransport: AnyObject {
     func sendControl(_ message: ControlMessage)
     func sendVideoFrame(_ frame: VideoEncoder.EncodedFrame)
 }
+
+extension PhoneTransport { var connectionKind: ConnectionManager.TransportType { .usb } }
 
 extension CameraSession: PhoneCapture {}
 extension VideoEncoder: PhoneEncoder {}
