@@ -16,6 +16,7 @@ public sealed class WirelessTransport : IConnectionTransport
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;
     public event EventHandler<string>? Diagnostic;
+    public event EventHandler? PairingCompleted;
     public TransportState State { get; private set; }
     public string StatusMessage { get; private set; } = "Wireless is off. Pair a phone to enable it.";
     public TransportType Kind => TransportType.WiFi;
@@ -89,6 +90,7 @@ public sealed class WirelessTransport : IConnectionTransport
                     var token = _identity.Authenticate(request.token ?? "", request.pair);
                     if (token is null) { await tls.WriteAsync("{\"ok\":false}\n"u8.ToArray(), timeout.Token); continue; }
                     await tls.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(new { ok = true, token }).Concat(new byte[] { 10 }).ToArray(), timeout.Token);
+                    if (request.pair) PairingCompleted?.Invoke(this, EventArgs.Empty);
                 }
                 _stream = tls; Interlocked.Increment(ref _generation); authenticated = true;
                 Report("Paired iPhone connected over encrypted Wi-Fi."); SetState(TransportState.Connected);

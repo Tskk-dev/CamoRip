@@ -132,7 +132,7 @@ struct ContentView: View {
         }
         .simultaneousGesture(TapGesture().onEnded { screenDimmer.userInteracted() })
         .fullScreenCover(isPresented: $showWirelessScanner, onDismiss: { camera.start() }) {
-            WirelessScannerView { code in
+            WirelessScannerScreen { code in
                 do {
                     try connection.pairWirelessly(code: code)
                     showWirelessScanner = false
@@ -140,8 +140,7 @@ struct ContentView: View {
                     wirelessError = error.localizedDescription
                     showWirelessScanner = false
                 }
-            } onCancel: { showWirelessScanner = false }
-            .interactiveDismissDisabled()
+            }
         }
         .alert("Wireless pairing", isPresented: Binding(get: { wirelessError != nil }, set: { if !$0 { wirelessError = nil } })) {
             Button("OK") { wirelessError = nil }
@@ -152,7 +151,12 @@ struct ContentView: View {
             updateScreenDimming()
             if phase == .active { Task { await checkPermission() } }
         }
-        .onChange(of: connection.state) { _ in updateScreenDimming() }
+        .onChange(of: connection.state) { state in
+            if showWirelessScanner && connection.activeTransport == .wifi && (state == .connected || state == .streaming) {
+                showWirelessScanner = false
+            }
+            updateScreenDimming()
+        }
         .onChange(of: dimStreamingScreen) { _ in updateScreenDimming() }
         .onChange(of: showStreamingPreview) { value in
             DiagnosticLog.write("Streaming preview enabled=\(value)")

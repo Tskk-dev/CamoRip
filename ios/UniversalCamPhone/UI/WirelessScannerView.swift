@@ -1,13 +1,30 @@
 import SwiftUI
 import AVFoundation
 
+struct WirelessScannerScreen: View {
+    @Environment(\.dismiss) private var dismiss
+    var onScan: (String) -> Void
+
+    var body: some View {
+        WirelessScannerView { code in
+            dismiss()
+            onScan(code)
+        } onCancel: { dismiss() }
+        .ignoresSafeArea()
+        .interactiveDismissDisabled()
+    }
+}
+
 struct WirelessScannerView: UIViewControllerRepresentable {
     var onScan: (String) -> Void
     var onCancel: () -> Void
     func makeUIViewController(context: Context) -> QRScannerController {
         QRScannerController(onScan: onScan, onCancel: onCancel)
     }
-    func updateUIViewController(_ controller: QRScannerController, context: Context) {}
+    func updateUIViewController(_ controller: QRScannerController, context: Context) {
+        controller.onScan = onScan
+        controller.onCancel = onCancel
+    }
     static func dismantleUIViewController(_ controller: QRScannerController, coordinator: ()) { controller.stop() }
 }
 
@@ -16,8 +33,8 @@ final class QRScannerController: UIViewController, AVCaptureMetadataOutputObject
     private let queue = DispatchQueue(label: "com.camorip.qr-scanner")
     private var preview: AVCaptureVideoPreviewLayer?
     private var finished = false
-    private let onScan: (String) -> Void
-    private let onCancel: () -> Void
+    var onScan: (String) -> Void
+    var onCancel: () -> Void
     init(onScan: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         self.onScan = onScan; self.onCancel = onCancel
         super.init(nibName: nil, bundle: nil)
@@ -85,8 +102,13 @@ final class QRScannerController: UIViewController, AVCaptureMetadataOutputObject
         stop { self.onCancel() }
     }
     func stop(completion: (() -> Void)? = nil) {
+        finished = true
         queue.async { [self] in
             if session.isRunning { session.stopRunning() }
+            session.beginConfiguration()
+            for input in session.inputs { session.removeInput(input) }
+            for output in session.outputs { session.removeOutput(output) }
+            session.commitConfiguration()
             DispatchQueue.main.async { completion?() }
         }
     }

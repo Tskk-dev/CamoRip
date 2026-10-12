@@ -7,6 +7,7 @@ final class StreamingSwitchTests: XCTestCase {
     private final class Trace { var events: [String] = [] }
 
     private final class PC: PhoneTransport {
+        var connectionKind: ConnectionManager.TransportType = .usb
         var onControlMessage: ((Data) -> Void)?
         var onStateChange: ((USBTransport.USBConnectionState) -> Void)?
         var onVideoBackpressure: (() -> Void)?
@@ -69,6 +70,9 @@ final class StreamingSwitchTests: XCTestCase {
         var holdSwitch = false
         var failSwitch = false
         var switches: [() -> Void] = []
+        var holdControls = false
+        var controlReplies: [() -> Void] = []
+        var appliedControls: [(CameraControlRequest, Bool)] = []
         var availableCameras: [CameraInfo] {
             ["rear", "front"].map { .init(id: $0, name: $0, position: $0,
                                          type: "wide_angle", zoomFactor: 1) }
@@ -100,11 +104,20 @@ final class StreamingSwitchTests: XCTestCase {
         }
         func readControls(completion: @escaping (CameraControlState) -> Void) {
             var snapshot = CameraControlState(); snapshot.camera_id = currentCameraID
-            completion(snapshot)
+            snapshot.capture_modes = CaptureMode.choices
+            snapshot.ranges["focus"] = .init(min: 0, max: 1)
+            if holdControls { controlReplies.append { completion(snapshot) } }
+            else { completion(snapshot) }
         }
         func applyControls(_ request: CameraControlRequest, allowTorch: Bool,
                            completion: @escaping (CameraControlState) -> Void) {
-            readControls(completion: completion)
+            appliedControls.append((request, allowTorch))
+            var snapshot = CameraControlState()
+            snapshot.camera_id = currentCameraID
+            snapshot.request_id = request.request_id
+            snapshot.values = request.values
+            if holdControls { controlReplies.append { completion(snapshot) } }
+            else { completion(snapshot) }
         }
     }
 
@@ -130,8 +143,10 @@ final class StreamingSwitchTests: XCTestCase {
         }
     }
 
-    @MainActor private func connected(streaming: Bool = true) async throws -> Rig {
+    @MainActor private func connected(streaming: Bool = true,
+                                     transport: ConnectionManager.TransportType = .usb) async throws -> Rig {
         let rig = Rig()
+        rig.pc.connectionKind = transport
         rig.pc.onStateChange?(.connected); await settle()
         try rig.pc.send(.welcome); await settle()
         try rig.pc.send(.configure(resolution: "1920x1080", fps: 60, codec: "h264", bitrate: 12_000_000))
@@ -140,6 +155,89 @@ final class StreamingSwitchTests: XCTestCase {
         XCTAssertEqual(rig.phone.state, streaming ? .streaming : .connected)
         rig.trace.events.removeAll(); rig.pc.controls.removeAll()
         return rig
+    }
+
+    private func cameraStates(_ pc: PC) -> [CameraControlState] {
+        pc.controls.compactMap { message in
+            if case .cameraState(let state) = message { return state }
+            return nil
+        }
+    }
+
+    @MainActor func testWirelessHandshakePublishesControlsAndCaptureModes() async throws {
+        let rig = Rig()
+        rig.pc.connectionKind = .wifi
+        rig.pc.onStateChange?(.connected); await settle()
+        try rig.pc.send(.welcome); await settle()
+        XCTAssertEqual(rig.phone.activeTransport, .wifi)
+        let state = try XCTUnwrap(cameraStates(rig.pc).last)
+        XCTAssertEqual(state.camera_id, "rear")
+        XCTAssertEqual(state.capture_modes, CaptureMode.choices)
+        XCTAssertNotNil(state.ranges["focus"])
+    }
+
+    @MainActor func testControlRequestsAndAcknowledgementsWorkOnBothTransports() async throws {
+        for transport in [ConnectionManager.TransportType.usb, .wifi] {
+            let rig = try await connected(transport: transport)
+            try rig.pc.send(.getCameraState); await settle()
+            XCTAssertEqual(cameraStates(rig.pc).last?.camera_id, "rear")
+            let request = CameraControlRequest(request_id: 42, camera_id: "rear",
+                                               values: ["focus": 0.5, "torch_level": 0.25])
+            try rig.pc.send(.cameraSettings(request)); await settle()
+            let state = try XCTUnwrap(cameraStates(rig.pc).last)
+            XCTAssertEqual(state.request_id, 42)
+            XCTAssertEqual(state.values, request.values)
+            XCTAssertTrue(try XCTUnwrap(rig.camera.appliedControls.last).1)
+            try rig.pc.send(.stopStream); await settle()
+            try rig.pc.send(.cameraSettings(request)); await settle()
+            XCTAssertFalse(try XCTUnwrap(rig.camera.appliedControls.last).1)
+        }
+    }
+
+    @MainActor func testWirelessModeAndCameraChangesRefreshControls() async throws {
+        let rig = try await connected(transport: .wifi)
+        try rig.pc.send(.configure(resolution: "1280x720", fps: 30, codec: "h264", bitrate: 8_000_000))
+        await settle()
+        XCTAssertEqual(cameraStates(rig.pc).last?.camera_id, "rear")
+        rig.pc.controls.removeAll()
+        try rig.pc.send(.switchCamera(cameraID: "front")); await settle()
+        XCTAssertEqual(cameraStates(rig.pc).last?.camera_id, "front")
+        XCTAssertTrue(rig.pc.controls.contains { $0.type == "switch_camera_ack" })
+    }
+
+    @MainActor func testOldWirelessControlRepliesCannotReachReconnectedSession() async throws {
+        for nextTransport in [ConnectionManager.TransportType.usb, .wifi] {
+            let rig = try await connected(transport: .wifi)
+            rig.camera.holdControls = true
+            try rig.pc.send(.getCameraState)
+            try rig.pc.send(.cameraSettings(.init(request_id: 42, camera_id: "rear", values: ["focus": 0.5])))
+            await settle()
+            XCTAssertEqual(rig.camera.controlReplies.count, 2)
+            rig.pc.disconnect(); await settle()
+            rig.pc.connectionKind = nextTransport
+            rig.pc.onStateChange?(.connected); await settle()
+            for reply in rig.camera.controlReplies { reply() }
+            XCTAssertTrue(cameraStates(rig.pc).isEmpty)
+            rig.camera.controlReplies.removeAll(); rig.camera.holdControls = false
+            try rig.pc.send(.welcome); await settle()
+            XCTAssertEqual(cameraStates(rig.pc).last?.camera_id, "rear")
+        }
+    }
+
+    @MainActor func testCameraSwitchDiscardsPendingWirelessControlReplies() async throws {
+        let rig = try await connected(transport: .wifi)
+        rig.camera.holdControls = true
+        try rig.pc.send(.getCameraState)
+        try rig.pc.send(.cameraSettings(.init(request_id: 42, camera_id: "rear", values: ["focus": 0.5])))
+        await settle()
+        let replies = rig.camera.controlReplies
+        rig.camera.controlReplies.removeAll(); rig.camera.holdControls = false
+        rig.phone.switchCamera(cameraID: "front")
+        rig.pc.controls.removeAll()
+        for reply in replies { reply() }
+        XCTAssertTrue(cameraStates(rig.pc).isEmpty)
+        try rig.pc.send(.getCameraState); await settle()
+        XCTAssertEqual(cameraStates(rig.pc).last?.camera_id, "front")
     }
 
     private func sample() throws -> CMSampleBuffer {

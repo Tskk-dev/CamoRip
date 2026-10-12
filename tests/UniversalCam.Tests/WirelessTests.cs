@@ -64,6 +64,14 @@ public sealed class WirelessTests
             await using var transport = new WirelessTransport(directory, 0, advertise: false);
             var usb = new FakeUsb();
             await using var automatic = new AutomaticTransport(usb, transport);
+            int pairings = 0;
+            var paired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            transport.PairingCompleted += (_, _) =>
+            {
+                Interlocked.Increment(ref pairings);
+                transport.CancelPairing();
+                paired.TrySetResult();
+            };
             using var qr = Decode(transport.BeginPairing()); var fields = qr.RootElement;
             string fingerprint = fields.GetProperty("fingerprint").GetString()!;
             string id = fields.GetProperty("id").GetString()!;
@@ -87,6 +95,8 @@ public sealed class WirelessTests
             using (first.Item1) using (first.Item2) using (first.Item3)
             {
                 Assert.True(first.Item3.RootElement.GetProperty("ok").GetBoolean());
+                await paired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(1, Volatile.Read(ref pairings));
                 permanent = first.Item3.RootElement.GetProperty("token").GetString()!;
                 byte[] json = new Hello { Capabilities = ["h264"] }.ToJsonBytes();
                 await first.Item2.WriteAsync(new byte[] { 0 }.Concat(json).Concat(new byte[] { 10 }).ToArray());
@@ -103,6 +113,7 @@ public sealed class WirelessTests
             var rejected = await Connect(new string('0', 64), false);
             using (rejected.Item1) using (rejected.Item2) using (rejected.Item3)
                 Assert.False(rejected.Item3.RootElement.GetProperty("ok").GetBoolean());
+            Assert.Equal(1, Volatile.Read(ref pairings));
         }
         finally { Directory.Delete(directory, true); }
     }

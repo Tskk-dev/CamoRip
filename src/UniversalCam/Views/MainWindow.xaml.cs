@@ -9,10 +9,20 @@ namespace UniversalCam.Views;
 
 public sealed partial class MainWindow : Window
 {
+    private bool _pairingOpen;
     private async void OnWirelessPairing(object sender, RoutedEventArgs e)
     {
         var wireless = _service.Connection.Wireless;
-        if (wireless is null) return;
+        if (wireless is null || _pairingOpen) return;
+        _pairingOpen = true;
+        bool paired = false;
+        ContentDialog? pairingDialog = null;
+        void OnPaired(object? sender, EventArgs e) => App.Ui(() =>
+        {
+            paired = true;
+            pairingDialog?.Hide();
+        });
+        wireless.PairingCompleted += OnPaired;
         try
         {
             while (true)
@@ -33,13 +43,21 @@ public sealed partial class MainWindow : Window
                 content.Children.Add(new Border { Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
                     Padding = new Thickness(12), Child = new Image { Source = bitmap, Width = 320, Height = 320 } });
                 content.Children.Add(new TextBlock { Text = "This code expires in 5 minutes and works once. After pairing, reconnection is automatic. Allow CamoRip through the Windows firewall on Private networks.", TextWrapping = TextWrapping.Wrap });
-                var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Connect wirelessly", Content = content,
+                if (paired) break;
+                pairingDialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Connect wirelessly", Content = content,
                     PrimaryButtonText = "Refresh QR", CloseButtonText = "Done" };
-                if (await dialog.ShowAsync() != ContentDialogResult.Primary) break;
+                var result = await pairingDialog.ShowAsync();
+                pairingDialog = null;
+                if (paired || result != ContentDialogResult.Primary) break;
             }
         }
         catch (Exception ex) { ConnectionNotice.Message = "Wireless pairing: " + ex.Message; ConnectionNotice.IsOpen = true; }
-        finally { wireless.CancelPairing(); }
+        finally
+        {
+            wireless.PairingCompleted -= OnPaired;
+            wireless.CancelPairing();
+            _pairingOpen = false;
+        }
     }
     private async void OnForgetWireless(object sender, RoutedEventArgs e)
     {
