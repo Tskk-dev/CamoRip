@@ -23,6 +23,8 @@ internal sealed class AppSettings
     public bool PreviewFill { get; set; }
     public string CaptureResolution { get; set; } = "1920x1080";
     public int CaptureFps { get; set; } = 60;
+    public Core.Video.VideoQuality CaptureQuality { get; set; } = Core.Video.VideoQuality.Balanced;
+    public double CustomBitrateMbps { get; set; } = 20;
     public static AppSettings Load(string? directory = null)
     {
         directory ??= DirectoryPath;
@@ -31,6 +33,8 @@ internal sealed class AppSettings
             var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(Path.Combine(directory, "settings.json"))) ?? new();
             settings._storageDirectory = directory;
             if (settings.PreviewFps is not (0 or 15 or 30 or 60)) settings.PreviewFps = 60;
+            if (!Enum.IsDefined(settings.CaptureQuality)) settings.CaptureQuality = Core.Video.VideoQuality.Balanced;
+            if (!double.IsFinite(settings.CustomBitrateMbps) || settings.CustomBitrateMbps is < 1 or > 50) settings.CustomBitrateMbps = 20;
             if (!Core.Video.VideoMode.Choices.Contains(Core.Video.VideoMode.Parse(settings.CaptureResolution ?? "", settings.CaptureFps)))
             { settings.CaptureResolution = "1920x1080"; settings.CaptureFps = 60; }
             return settings;

@@ -223,7 +223,7 @@ final class ConnectionManager: ObservableObject {
         }
         switch message {
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
@@ -232,9 +232,9 @@ final class ConnectionManager: ObservableObject {
             guard codec.lowercased() == "h264", dimensions.count == 2,
                   let width = Int32(dimensions[0]), let height = Int32(dimensions[1]),
                   (640...3840).contains(width), (360...2160).contains(height), width % 2 == 0, height % 2 == 0,
-                  (15...60).contains(fps), (500_000...20_000_000).contains(requestedBitrate),
+                  (15...60).contains(fps), CaptureEncodingLimits.bitrateRange.contains(requestedBitrate),
                   let camera = cameraSession else {
-                fail(code: "unsupported_configuration", message: "Use H.264, up to 3840x2160 at 15–60 fps."); return
+                fail(code: "unsupported_configuration", message: "Use H.264, up to 3840x2160 at 15–60 fps and 0.5–50 Mbps."); return
             }
             stopStreaming(notifyPeer: false)
             configuring = true

@@ -10,7 +10,7 @@
         <PlatformTarget>x64</PlatformTarget>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <AssemblyName>CamoRip</AssemblyName>
-        <Version>0.3.0</Version>
+        <Version>0.3.2</Version>
 
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>

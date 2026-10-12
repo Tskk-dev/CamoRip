@@ -1,6 +1,14 @@
 import XCTest
 
 final class CameraControlProtocolTests: XCTestCase {
+    func testEncodingBitrateLimitsCoverQualityControls() {
+        XCTAssertTrue(CaptureEncodingLimits.bitrateRange.contains(500_000))
+        XCTAssertTrue(CaptureEncodingLimits.bitrateRange.contains(24_000_000))
+        XCTAssertTrue(CaptureEncodingLimits.bitrateRange.contains(40_000_000))
+        XCTAssertTrue(CaptureEncodingLimits.bitrateRange.contains(50_000_000))
+        XCTAssertFalse(CaptureEncodingLimits.bitrateRange.contains(499_999))
+        XCTAssertFalse(CaptureEncodingLimits.bitrateRange.contains(50_000_001))
+    }
     func testCaptureModesInclude4K30AndFilterActualFrameRateRanges() throws {
         XCTAssertEqual(CaptureMode.choices.count, 5)
         let mode = CaptureMode(width: 3840, height: 2160, fps: 30)

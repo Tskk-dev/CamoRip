@@ -182,6 +182,8 @@ public sealed class DecodedFrame
     public int Width { get; }
     public int Height { get; }
     public long PtsUs { get; }
+    /// <summary>Local Stopwatch ticks at complete USB packet arrival; zero when unavailable. Not sensor capture time.</summary>
+    public long ReceivedTicks { get; set; }
     /// <summary>Tightly packed NV12: width*height luma bytes followed by width*height/2 chroma bytes.</summary>
     public byte[] Data { get; }
     public DecodedFrame(int width, int height, long ptsUs, byte[] data)

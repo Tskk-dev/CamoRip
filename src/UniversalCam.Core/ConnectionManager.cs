@@ -9,11 +9,13 @@ public sealed class ConnectionManager : IAsyncDisposable
     public event EventHandler<string>? Failure;
     public event EventHandler<CameraState>? CameraStateReceived;
     public bool SupportsCameraSettings { get; private set; }
+    public bool SupportsBitrateControl { get; private set; }
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;
     public event EventHandler<AvailableCameras>? CamerasReceived;
     public event EventHandler? CameraSwitched;
     public event EventHandler<int>? LatencyUpdated;
+    public event EventHandler<double>? RoundTripUpdated;
     public event EventHandler<string>? OrientationChanged;
     public event EventHandler<string>? Diagnostic;
     public event EventHandler<ConfigureAck>? ConfigurationAcknowledged;
@@ -38,6 +40,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     private int _configurationGeneration;
     private int _transportGeneration;
     private long _configurationRequestId;
+    private long _pingToken, _pingSentTicks;
 
     public ConnectionManager() : this(new TcpUsbTransport()) { }
 
@@ -68,7 +71,8 @@ public sealed class ConnectionManager : IAsyncDisposable
         if (codec != "h264") throw new ArgumentException("Only H.264 is supported.", nameof(codec));
         if (fps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(fps), "Choose 1–60 fps.");
         if (Video.VideoMode.Parse(resolution, fps) is null) throw new ArgumentException("Choose a valid NV12 capture mode up to 4K.", nameof(resolution));
-        if (bitrate is < 100_000 or > 20_000_000) throw new ArgumentOutOfRangeException(nameof(bitrate));
+        if (bitrate is < Video.VideoBitrate.Minimum or > Video.VideoBitrate.Maximum) throw new ArgumentOutOfRangeException(nameof(bitrate));
+        if (bitrate > 20_000_000 && !SupportsBitrateControl) throw new InvalidOperationException("Update the iPhone app to use bitrates above 20 Mbps.");
         if (ActiveTransport != TransportType.USB) return Task.CompletedTask;
         _configurationGeneration = Volatile.Read(ref _generation);
         _configurationPending = true;
@@ -93,8 +97,13 @@ public sealed class ConnectionManager : IAsyncDisposable
         SendAsync(new SwitchCamera { CameraId = cameraId }, ct);
     public Task RequestCameraStateAsync(CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(new GetCameraState(), ct) : Task.CompletedTask;
     public Task SetCameraSettingsAsync(CameraSettings settings, CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(settings, ct) : Task.CompletedTask;
-    public Task PingAsync(CancellationToken ct = default) =>
-        SendAsync(new Ping { Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, ct);
+    public Task PingAsync(CancellationToken ct = default)
+    {
+        var token = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        Interlocked.Exchange(ref _pingSentTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+        Interlocked.Exchange(ref _pingToken, token);
+        return SendAsync(new Ping { Ts = token }, ct);
+    }
 
     private Task SendAsync(ControlMessage message, CancellationToken ct) =>
         ActiveTransport == TransportType.USB ? _usb.SendControlForConnectionAsync(message, Volatile.Read(ref _transportGeneration), ct) : Task.CompletedTask;
@@ -118,6 +127,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             Interlocked.Increment(ref _generation);
             _sessionReady = false;
             SupportsCameraSettings = false;
+            SupportsBitrateControl = false;
             _configurationPending = false;
             _startAfterConfigure = false;
             ActiveTransport = TransportType.None;
@@ -152,6 +162,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                 return;
             }
             SupportsCameraSettings = hello.Capabilities.Contains("camera_controls_v1");
+            SupportsBitrateControl = hello.Capabilities.Contains("bitrate_control_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
             _desiredStreaming = true;
@@ -206,8 +217,14 @@ public sealed class ConnectionManager : IAsyncDisposable
                 CamerasReceived?.Invoke(this, cameras);
                 break;
             case Pong pong:
-                var rtt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - pong.Ts;
-                if (rtt is >= 0 and <= 60_000) LatencyUpdated?.Invoke(this, (int)(rtt / 2));
+                if (pong.Ts != Interlocked.Read(ref _pingToken)) break;
+                var sent = Interlocked.Exchange(ref _pingSentTicks, 0);
+                if (sent == 0) break;
+                var rtt = System.Diagnostics.Stopwatch.GetElapsedTime(sent).TotalMilliseconds;
+                if (rtt is >= 0 and <= 60_000) {
+                    RoundTripUpdated?.Invoke(this, rtt);
+                    LatencyUpdated?.Invoke(this, (int)(rtt / 2));
+                }
                 break;
             case Ping ping:
                 _ = ReplyPongAsync(ping.Ts);

@@ -1,5 +1,9 @@
 import Foundation
 
+enum CaptureEncodingLimits {
+    static let bitrateRange = 500_000...50_000_000
+}
+
 struct CaptureMode: Codable, Equatable {
     let width: Int32
     let height: Int32

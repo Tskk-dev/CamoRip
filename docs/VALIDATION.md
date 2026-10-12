@@ -178,3 +178,33 @@ the preview cadence commit; it is not a complete installer result.
   the reported crash is fixed on the device.
 - The Windows torch crash also recurred at 09:35:02 on 0.3.0, in ucrtbase.dll
   (0xc0000409, parameter 5). It remains unresolved and is separate from this fix.
+
+## 0.3.2 quality controls and latency investigation
+
+- Windows adds Efficient/Balanced/High/Custom quality with an explicit Apply
+  button and a 1–50 Mbps custom target. Save only after acknowledgement.
+  Balanced preserves current defaults; High doubles them (1080p60: 24 Mbps;
+  4K30: 40 Mbps). bitrate_control_v1 gates the controls; older phones reconnect
+  with balanced defaults rather than unsupported high targets.
+- The phone validates 0.5–50 Mbps, checks the bitrate property setter, requests
+  an optional one-frame compressor delay bound with fallback, and logs the bound
+  and queried hardware-encoder status. The target is an average bitrate;
+  Windows separately logs actual compressed payload Mbps.
+- LATENCY logs match presentation timestamps to complete-packet arrival time,
+  recording arrival-to-decode, arrival-to-camera-publication and arrival-to-preview
+  submission. Tracking storage is bounded. Matched ping/pong uses a local monotonic
+  clock for control RTT. These measurements exclude capture/phone encoding,
+  delivery before packet arrival, downstream app buffering and display scanout.
+  Control RTT and the existing stage activity ages are not full video latency.
+- The available Windows 0.3.0 log (2026-10-12 09:51–09:53) shows approximately
+  60 fps at 720p60, hardware decoding, final decode averages about 1.7–2.2 ms,
+  no recorded queue drops/publication failures and preview around 51–58 fps.
+  No sustained PC decoder backlog is recorded. The user clarified a perceived
+  delay of a few milliseconds; exact camera-to-screen latency is unmeasured.
+- Local targeted checks: 32 passed. Self-contained WinUI publish succeeded.
+  CI compiles native components/iOS and runs the complete suites. Physical
+  quality, bitrate, thermals, lower encoder delay and cable performance remain
+  unverified. Install both 0.3.2 companions, compare presets, inspect LATENCY
+  logs and phone encoder status, and film a source timer/LED alongside the
+  displayed feed to measure full delay. Keep mode/exposure/app identical for
+  any cable/port comparison. No visual UI validation is required by the user.

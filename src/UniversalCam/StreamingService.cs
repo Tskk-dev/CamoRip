@@ -23,6 +23,10 @@ internal sealed class StreamingService : IAsyncDisposable
     private readonly Channel<(DecodedFrame Frame, long Generation)> _previewFramesQueue;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly StageTiming _decodeTiming = new(), _cameraTiming = new(), _previewTiming = new();
+    private readonly StageTiming _arrivalToDecode = new(), _arrivalToCamera = new(), _arrivalToPreview = new();
+    private readonly FrameArrivalTracker _arrivals = new();
+    private long _receivedBytes, _lastReceivedBytes;
+    private double _controlRttMs = -1;
     private VirtualCameraSession? _camera;
     private Task? _decodeTask, _cameraTask, _metricsTask;
 
@@ -80,6 +84,8 @@ internal sealed class StreamingService : IAsyncDisposable
         {
             var generation = Interlocked.Read(ref _decodingGeneration);
             if (!IsCurrent(generation)) return;
+            frame.ReceivedTicks = _arrivals.Take(frame.PtsUs);
+            if (frame.ReceivedTicks > 0) _arrivalToDecode.Record(frame.ReceivedTicks);
             Interlocked.Increment(ref _decodedFrames);
             Interlocked.Exchange(ref _lastDecodedTicks, Stopwatch.GetTimestamp());
             Volatile.Write(ref _decodedWidth, frame.Width);
@@ -93,6 +99,7 @@ internal sealed class StreamingService : IAsyncDisposable
         };
         _connection.Diagnostic += (_, message) => Ui(() => SetStatus("Diagnostic", message));
         _connection.Diagnostic += (_, message) => App.Log("INFO", $"Connection: {message}");
+        _connection.RoundTripUpdated += (_, rtt) => Volatile.Write(ref _controlRttMs, rtt);
         _connection.ConfigurationAcknowledged += (_, configuration) =>
         {
             var mode = VideoMode.Parse(configuration.Resolution, configuration.Fps)!;
@@ -103,7 +110,7 @@ internal sealed class StreamingService : IAsyncDisposable
         _connection.ConfigurationAcknowledged += (_, configuration) => App.Log("INFO", $"Capture configured: {configuration.Resolution} at {configuration.Fps} fps.");
         _connection.StreamStateChanged += (_, streaming) =>
         {
-            if (!streaming) _frames.Reset("stream stopped");
+            if (!streaming) { _frames.Reset("stream stopped"); _arrivals.Reset(); }
             _camera?.OnStreamStateChanged(this, streaming);
             Ui(() => SetStreaming(streaming));
         };
@@ -116,7 +123,10 @@ internal sealed class StreamingService : IAsyncDisposable
         {
             if (!frame.IsVideo || _closing) return;
             Interlocked.Increment(ref _receivedFrames);
-            Interlocked.Exchange(ref _lastUsbTicks, Stopwatch.GetTimestamp());
+            var now = Stopwatch.GetTimestamp();
+            Interlocked.Exchange(ref _lastUsbTicks, now);
+            Interlocked.Add(ref _receivedBytes, frame.Payload.Length);
+            _arrivals.Record(frame.Header.PtsUs, now);
             _frames.Enqueue(frame);
         };
         // A dedicated MTA thread keeps decode independent of thread-pool/UI load.
@@ -125,7 +135,7 @@ internal sealed class StreamingService : IAsyncDisposable
         _cameraTask = Task.Factory.StartNew(PublishCameraFrames, CancellationToken.None,
             TaskCreationOptions.LongRunning, TaskScheduler.Default);
         _metricsTask = Task.Run(CollectMetrics);
-        App.Log("INFO", "Pipeline v5: WinUI D3D11 shader preview; pooled NV12 buffers; MMCSS dedicated decoder/publisher; D3D11 hardware preferred; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
+        App.Log("INFO", "Pipeline v6: quality targets and PC transit measurements; WinUI D3D11 shader preview; pooled NV12 buffers; MMCSS dedicated decoder/publisher; D3D11 hardware preferred; independent latest-frame camera/preview; compressed queue limited to 64 frames, 16 MiB, 500 ms.");
         try { await _connection.StartAsync(); }
         catch (Exception ex) { SetStatus("Diagnostic", ex.Message); App.Log(ex); }
     }
@@ -133,6 +143,7 @@ internal sealed class StreamingService : IAsyncDisposable
     private void OnConnectionState(object? sender, TransportState state)
     {
         _frames.Reset($"USB state {state}");
+        _arrivals.Reset(); Volatile.Write(ref _controlRttMs, -1);
         try { _camera?.OnConnectionStateChanged(sender, state); }
         catch (Exception ex) { App.Log(ex); }
         Ui(() =>
@@ -157,7 +168,8 @@ internal sealed class StreamingService : IAsyncDisposable
     }
 
     public bool ChangingMode { get; private set; }
-    public async Task SetVideoModeAsync(VideoMode mode)
+    public int AppliedBitrate { get; private set; }
+    public async Task SetVideoModeAsync(VideoMode mode, int? bitrateOverride = null)
     {
         await _modeChange.WaitAsync();
         var confirmed = new TaskCompletionSource<ConfigureAck>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -168,12 +180,15 @@ internal sealed class StreamingService : IAsyncDisposable
         try
         {
             if (!Connected) throw new InvalidOperationException("Connect the iPhone before changing video mode.");
+            var bitrate = bitrateOverride ?? VideoBitrate.Resolve(mode,
+                _connection.SupportsBitrateControl ? App.Settings.CaptureQuality : VideoQuality.Balanced, App.Settings.CustomBitrateMbps);
             ChangingMode = true; Changed?.Invoke();
             _connection.ConfigurationAcknowledged += Ack;
             _connection.Failure += Failed; _connection.StateChanged += Disconnected;
-            App.Log("INFO", $"Requesting capture mode: {mode}.");
-            await _connection.ConfigureAsync(mode.Resolution, mode.Fps, "h264", mode.Bitrate);
+            App.Log("INFO", $"Requesting capture mode: {mode}; H.264 target bitrate={bitrate / 1_000_000.0:F1} Mbps.");
+            await _connection.ConfigureAsync(mode.Resolution, mode.Fps, "h264", bitrate);
             await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            AppliedBitrate = bitrate;
         }
         finally
         {
@@ -240,6 +255,7 @@ internal sealed class StreamingService : IAsyncDisposable
                     {
                         Interlocked.Increment(ref _cameraFrames);
                         Interlocked.Exchange(ref _lastCameraTicks, Stopwatch.GetTimestamp());
+                        if (queued.Frame.ReceivedTicks > 0) _arrivalToCamera.Record(queued.Frame.ReceivedTicks);
                     }
                     else Interlocked.Increment(ref _publishFailures);
                 }
@@ -264,7 +280,10 @@ internal sealed class StreamingService : IAsyncDisposable
             var started = Stopwatch.GetTimestamp();
             bool rendered = PreviewFrame?.Invoke(queued.Frame) == true;
             _previewTiming.Record(started);
-            if (rendered) Interlocked.Increment(ref _previewFrames);
+            if (rendered) {
+                Interlocked.Increment(ref _previewFrames);
+                if (queued.Frame.ReceivedTicks > 0) _arrivalToPreview.Record(queued.Frame.ReceivedTicks);
+            }
         }
         catch (Exception ex) { App.Log(ex); SetStatus("Diagnostic", "Preview: " + ex.Message); }
         finally { queued.Frame.Release(); }
@@ -280,7 +299,10 @@ internal sealed class StreamingService : IAsyncDisposable
         for (var index = 0; index < 3; index++) _lastCollections[index] = GC.CollectionCount(index);
         try
         {
-            while (await timer.WaitForNextTickAsync(_shutdown.Token)) WriteMetrics(process);
+            while (await timer.WaitForNextTickAsync(_shutdown.Token)) {
+                WriteMetrics(process);
+                if (_connection.State == TransportState.Connected) await _connection.PingAsync(_shutdown.Token);
+            }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception ex) { App.Log(ex); }
@@ -311,6 +333,12 @@ internal sealed class StreamingService : IAsyncDisposable
         var detail = $"coalesced camera/preview={cameraCoalesced - _lastCameraCoalesced}/{previewCoalesced - _lastPreviewCoalesced}; publish failures={failures - _lastPublishFailures}";
         _lastCameraCoalesced = cameraCoalesced; _lastPreviewCoalesced = previewCoalesced; _lastPublishFailures = failures;
         var timing = $"stage avg/max(count): decode={_decodeTiming.TakeSnapshot()} publish={_cameraTiming.TakeSnapshot()} preview={_previewTiming.TakeSnapshot()}";
+        var transit = $"PC arrival-to-output avg/max(count): decoded={_arrivalToDecode.TakeSnapshot()} camera={_arrivalToCamera.TakeSnapshot()} preview={_arrivalToPreview.TakeSnapshot()}";
+        var bytes = Interlocked.Read(ref _receivedBytes);
+        var mbps = (bytes - _lastReceivedBytes) * 8.0 / seconds / 1_000_000;
+        _lastReceivedBytes = bytes;
+        var rtt = Volatile.Read(ref _controlRttMs);
+        var latency = $"{transit}; USB control RTT={(rtt < 0 ? "pending" : $"{rtt:F2}ms")}; H.264 actual={mbps:F2}Mbps target={AppliedBitrate / 1_000_000.0:F1}Mbps; excludes sensor/phone encoding, app buffering and display scanout";
         process.Refresh();
         var cpuTime = process.TotalProcessorTime;
         var cpu = (cpuTime - _lastCpuTime).TotalSeconds / seconds / Environment.ProcessorCount * 100;
@@ -333,6 +361,7 @@ internal sealed class StreamingService : IAsyncDisposable
             SetStatus("PerformanceDetails", message);
         });
         App.Log("METRIC", $"{message}; queue={queue.Depth}/{queue.Bytes}B age={queue.OldestAgeMs:F0}ms recoveries={recoveries} waitingIDR={queue.WaitingForKeyframe}; {timing}; {detail}; decoder backend={_decoder.BackendStatus}; decoded size={Volatile.Read(ref _decodedWidth)}x{Volatile.Read(ref _decodedHeight)}; last frame age USB/decode/camera={FrameAge(_lastUsbTicks, now)}/{FrameAge(_lastDecodedTicks, now)}/{FrameAge(_lastCameraTicks, now)}ms; CPU={cpu:F1}% workingSet={process.WorkingSet64 / 1048576}MiB; allocation={allocationRate:F1}MiB/s GC0/1/2={string.Join("/", collections)}");
+        App.Log("LATENCY", latency);
     }
 
     private static string FrameAge(long ticks, long now) => ticks == 0 ? "none" : $"{Math.Max(0, Stopwatch.GetElapsedTime(ticks, now).TotalMilliseconds):F0}";

@@ -9,6 +9,35 @@ namespace UniversalCam.Tests;
 public class ConnectionManagerTests
 {
     [Fact]
+    public async Task UpdatedPhoneAcceptsHighBitrateAndReportsControlRoundTrip()
+    {
+        using var service = new FakeAppleService();
+        var server = Task.Run(async () => {
+            await DiscoveryAsync(service);
+            await service.ServeOnceAsync(async (_, stream) => {
+                await FakeAppleService.ReplyAsync(stream, "<key>MessageType</key><string>Result</string><key>Number</key><integer>0</integer>");
+                Assert.IsType<Welcome>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new Hello { Capabilities = ["h264", "bitrate_control_v1"] });
+                var configure = Assert.IsType<Configure>(await ReadControlAsync(stream));
+                Assert.Equal(40_000_000, configure.Bitrate);
+                await SendControlAsync(stream, new ConfigureAck { RequestId = configure.RequestId, Resolution = configure.Resolution, Fps = configure.Fps });
+                Assert.IsType<StartStream>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new StartStream());
+                var ping = Assert.IsType<Ping>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new Pong { Ts = ping.Ts + 1 }); // unsolicited replies do not measure RTT
+                await SendControlAsync(stream, new Pong { Ts = ping.Ts });
+            });
+        });
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(service.Port), TimeSpan.FromSeconds(1)));
+        var result = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.StateChanged += (_, state) => { if (state == TransportState.Connected) _ = manager.ConfigureAsync("3840x2160", 30, bitrate: 40_000_000); };
+        manager.StreamStateChanged += (_, streaming) => { if (streaming) _ = manager.PingAsync(); };
+        manager.RoundTripUpdated += (_, rtt) => result.TrySetResult(rtt);
+        await manager.StartAsync();
+        Assert.InRange(await result.Task.WaitAsync(TimeSpan.FromSeconds(10)), 0, 5_000);
+        await server;
+    }
+    [Fact]
     public async Task ConfigureAsync_Allows60AndRejectsHigherRates()
     {
         await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(1), TimeSpan.Zero));

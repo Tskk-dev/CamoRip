@@ -40,6 +40,9 @@ public sealed partial class MainWindow : Window
         }
         _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(RefreshModes);
         var settings = App.Settings;
+        Quality.ItemsSource = Enum.GetValues<VideoQuality>();
+        Quality.SelectedItem = settings.CaptureQuality;
+        CustomBitrate.Value = settings.CustomBitrateMbps;
         CloseToTray.IsOn = settings.CloseToTray; StartMinimized.IsOn = settings.StartMinimized;
         LaunchAtSignIn.IsOn = settings.LaunchAtSignIn; Logging.IsOn = settings.Logging;
         PreviewRate.SelectedIndex = settings.PreviewFps switch { 30 => 1, 15 => 2, 0 => 3, _ => 0 };
@@ -153,6 +156,7 @@ public sealed partial class MainWindow : Window
             if (existing is null || !existing.SequenceEqual(modes)) CaptureMode.ItemsSource = modes;
             CaptureMode.SelectedItem = modes.FirstOrDefault(m => m == selected);
             CaptureMode.IsEnabled = _service.Connected && !_service.ChangingMode && !_switching && modes.Length > 0;
+            RefreshQuality();
             CaptureModeHint.Text = _service.ChangingMode ? "Changing video mode…" : modes.Length == 0
                 ? "Connect the updated iPhone app to choose a video mode."
                 : "Changing mode restarts the webcam. Your video app may need to reopen it.";
@@ -171,6 +175,36 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
         finally { RefreshModes(); }
+    }
+
+    private void OnQualitySelection(object sender, SelectionChangedEventArgs args) { if (_ready) RefreshQuality(); }
+    private void OnCustomBitrate(NumberBox sender, NumberBoxValueChangedEventArgs args) { if (_ready) RefreshQuality(); }
+    private void RefreshQuality()
+    {
+        var enabled = _service.Connected && _service.Connection.SupportsBitrateControl && !_service.ChangingMode && !_switching;
+        Quality.IsEnabled = CustomBitrate.IsEnabled = enabled;
+        CustomBitrate.Visibility = Quality.SelectedItem is VideoQuality.Custom ? Visibility.Visible : Visibility.Collapsed;
+        var mode = VideoMode.Parse(_service.Connection.CaptureResolution, _service.Connection.CaptureFrameRate) ?? VideoMode.Default;
+        ApplyQuality.IsEnabled = enabled && Quality.SelectedItem is VideoQuality &&
+            (Quality.SelectedItem is not VideoQuality.Custom || double.IsFinite(CustomBitrate.Value) && CustomBitrate.Value is >= 1 and <= 50);
+        if (!_service.Connection.SupportsBitrateControl) { QualityHint.Text = "Connect the updated iPhone app to adjust video quality."; return; }
+        if (!ApplyQuality.IsEnabled) { QualityHint.Text = _service.ChangingMode ? "Applying video settings…" : "Enter a custom bitrate from 1 to 50 Mbps."; return; }
+        int requested = VideoBitrate.Resolve(mode, (VideoQuality)Quality.SelectedItem, CustomBitrate.Value);
+        QualityHint.Text = $"Selected: {requested / 1_000_000.0:F1} Mbps · Active target: {_service.AppliedBitrate / 1_000_000.0:F1} Mbps. Applying briefly restarts video. Higher bitrates can increase bandwidth and latency.";
+    }
+    private async void OnApplyQuality(object sender, RoutedEventArgs args)
+    {
+        if (!_ready || !ApplyQuality.IsEnabled || Quality.SelectedItem is not VideoQuality quality) return;
+        var mode = VideoMode.Parse(_service.Connection.CaptureResolution, _service.Connection.CaptureFrameRate);
+        if (mode is null) return;
+        var custom = CustomBitrate.Value;
+        try {
+            await _service.SetVideoModeAsync(mode, VideoBitrate.Resolve(mode, quality, custom));
+            App.Settings.CaptureQuality = quality;
+            if (double.IsFinite(custom) && custom is >= 1 and <= 50) App.Settings.CustomBitrateMbps = custom;
+            SaveSettings();
+        } catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); }
+        finally { RefreshQuality(); }
     }
 
     private void UpdatePreviewVisibility()

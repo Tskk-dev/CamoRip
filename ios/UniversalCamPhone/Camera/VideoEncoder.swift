@@ -182,20 +182,40 @@ final class VideoEncoder {
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
         // High profile supports CABAC and the negotiated 4K modes.
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,      value: kVTProfileLevel_H264_High_AutoLevel)
-        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate,    value: NSNumber(value: bitrate))
+        let bitrateStatus = VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: bitrate))
+        guard bitrateStatus == noErr else {
+            VTCompressionSessionInvalidate(s)
+            onError?(NSError(domain: NSOSStatusErrorDomain, code: Int(bitrateStatus)))
+            return
+        }
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: fps * 2))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_H264EntropyMode,   value: kVTH264EntropyMode_CABAC)
         // Set data rate limits: [bytes per second, period in seconds]
         let dataRateLimit = [Double(bitrate) / 8.0 * 1.5, 1.0] as CFArray
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_DataRateLimits, value: dataRateLimit)
-        let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(s)
+        // RealTime and disabled B-frames do not themselves bound encoder delay.
+        // Older hardware can reject this optional property; preserve its working
+        // configuration and report that instead of pretending it was applied.
+        let delayStatus = VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: NSNumber(value: 1))
+        var prepareStatus = VTCompressionSessionPrepareToEncodeFrames(s)
+        var boundedDelay = delayStatus == noErr
+        if prepareStatus != noErr && boundedDelay {
+            VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: NSNumber(value: kVTUnlimitedFrameDelayCount))
+            prepareStatus = VTCompressionSessionPrepareToEncodeFrames(s)
+            boundedDelay = false
+        }
         guard prepareStatus == noErr else {
             VTCompressionSessionInvalidate(s)
             onError?(NSError(domain: NSOSStatusErrorDomain, code: Int(prepareStatus)))
             return
         }
         self.session = s
+        var hardware: CFTypeRef?
+        let hardwareStatus = VTSessionCopyProperty(s, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+            allocator: nil, valueOut: &hardware)
+        let hardwareLabel = (hardware as? Bool).map { $0 ? "true" : "false" } ?? "unknown (status \(hardwareStatus))"
+        DiagnosticLog.write("Encoder ready: H.264 High \(width)x\(height) @ \(fps), target=\(bitrate), hardware=\(hardwareLabel), maxFrameDelay=\(boundedDelay ? "1" : "default"), delayPropertyStatus=\(delayStatus)")
     }
 }
 
