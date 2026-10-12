@@ -125,17 +125,19 @@ final class ConnectionManager: ObservableObject {
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
         streamingLock.lock()
-        let isStreaming = streamingForCapture
-        streamingLock.unlock()
-        if isStreaming { encoder.encode(sample) }
+        defer { streamingLock.unlock() }
+        // Enqueue atomically with the gate check, so invalidation cannot be
+        // followed by a late old-mode sample that passed the check earlier.
+        if streamingForCapture { encoder.encode(sample) }
     }
 
     func cameraFailed(_ message: String) { fail(code: "camera_unavailable", message: message) }
 
     func switchCamera(cameraID: String? = nil) {
         guard let camera = cameraSession else { return }
-        let wasStreaming = state == .streaming
-        if wasStreaming { state = .connected }
+        let resume = wantsStreaming
+        stopStreaming(notifyPeer: false)
+        wantsStreaming = resume
         configuring = true
         operationGeneration += 1
         let generation = handshakeGeneration
@@ -143,25 +145,32 @@ final class ConnectionManager: ObservableObject {
         let completion: (CameraInfo?) -> Void = { [weak self] info in
             guard let self, generation == self.handshakeGeneration,
                   operation == self.operationGeneration else { return }
-            self.configuring = false
             guard let info, let config = camera.configuration else {
                 self.fail(code: "camera_switch_failed", message: "Could not switch camera."); return
             }
-            self.prepareEncoder(config)
-            if self.activeTransport != nil {
-                self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
-                self.transport.sendControl(.switchCameraAck(cameraID: info.id, cameraName: info.name))
-                self.sendCameraState()
-            }
-            if self.wantsStreaming || self.startRequested {
-                let notify = self.pendingStartNotifiesPeer
-                self.startRequested = false
-                self.pendingStartNotifiesPeer = false
-                self.startStreaming(notifyPeer: notify)
+            self.prepareEncoder(config) { [weak self] in
+                guard let self, generation == self.handshakeGeneration,
+                      operation == self.operationGeneration else { return }
+                self.configuring = false
+                if self.activeTransport != nil {
+                    self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
+                    self.transport.sendControl(.switchCameraAck(cameraID: info.id, cameraName: info.name))
+                    self.sendCameraState()
+                }
+                if self.wantsStreaming || self.startRequested {
+                    let notify = self.pendingStartNotifiesPeer
+                    self.startRequested = false
+                    self.pendingStartNotifiesPeer = false
+                    self.startStreaming(notifyPeer: notify)
+                }
             }
         }
-        if let cameraID { camera.switchToCamera(withID: cameraID, completion: completion) }
-        else { camera.switchCamera(completion: completion) }
+        encoder.invalidate { [weak self] in
+            guard let self, generation == self.handshakeGeneration,
+                  operation == self.operationGeneration else { return }
+            if let cameraID { camera.switchToCamera(withID: cameraID, completion: completion) }
+            else { camera.switchCamera(completion: completion) }
+        }
     }
 
     private func transportChanged(_ state: USBTransport.USBConnectionState) {
@@ -234,26 +243,34 @@ final class ConnectionManager: ObservableObject {
             bitrate = requestedBitrate
             let generation = handshakeGeneration
             let operation = operationGeneration
-            camera.configure(width: width, height: height, fps: Int32(fps)) { [weak self] result in
+            DiagnosticLog.write("Reconfiguring capture: \(resolution) @ \(fps) fps; draining old encoder")
+            encoder.invalidate { [weak self] in
                 guard let self, generation == self.handshakeGeneration,
                       operation == self.operationGeneration else { return }
-                self.configuring = false
-                switch result {
-                case .success(let config):
-                    self.prepareEncoder(config)
-                    self.negotiated = true
-                    self.state = .connected
-                    self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps), requestID: requestID))
-                    self.sendCameras()
-                    self.sendCameraState()
-                    if self.startRequested {
-                        let notify = self.pendingStartNotifiesPeer
-                        self.startRequested = false
-                        self.pendingStartNotifiesPeer = false
-                        self.startStreaming(notifyPeer: notify)
+                camera.configure(width: width, height: height, fps: Int32(fps)) { [weak self] result in
+                    guard let self, generation == self.handshakeGeneration,
+                          operation == self.operationGeneration else { return }
+                    switch result {
+                    case .success(let config):
+                        self.prepareEncoder(config) { [weak self] in
+                            guard let self, generation == self.handshakeGeneration,
+                                  operation == self.operationGeneration else { return }
+                            self.configuring = false
+                            self.negotiated = true
+                            self.state = .connected
+                            self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps), requestID: requestID))
+                            self.sendCameras()
+                            self.sendCameraState()
+                            if self.startRequested {
+                                let notify = self.pendingStartNotifiesPeer
+                                self.startRequested = false
+                                self.pendingStartNotifiesPeer = false
+                                self.startStreaming(notifyPeer: notify)
+                            }
+                        }
+                    case .failure(let error):
+                        self.fail(code: "capture_configuration_failed", message: error.localizedDescription)
                     }
-                case .failure(let error):
-                    self.fail(code: "capture_configuration_failed", message: error.localizedDescription)
                 }
             }
         // Windows interprets these replies as accepted state acknowledgements;
@@ -282,10 +299,20 @@ final class ConnectionManager: ObservableObject {
         }
     }
 
-    private func prepareEncoder(_ config: CaptureConfiguration) {
-        encoder.prepare(width: config.width, height: config.height, fps: config.fps, bitrate: bitrate)
-        formatLabel = "\(config.width) × \(config.height) · \(config.fps) fps"
-        DiagnosticLog.write("Capture configured: \(config.width)x\(config.height) @ \(config.fps) fps")
+    private func prepareEncoder(_ config: CaptureConfiguration, completion: @escaping () -> Void) {
+        let generation = handshakeGeneration
+        let operation = operationGeneration
+        encoder.prepare(width: config.width, height: config.height, fps: config.fps, bitrate: bitrate) { [weak self] ready in
+            guard let self, generation == self.handshakeGeneration,
+                  operation == self.operationGeneration else { return }
+            guard ready else {
+                self.fail(code: "encoder_failed", message: "Could not prepare the encoder for this video mode.")
+                return
+            }
+            self.formatLabel = "\(config.width) × \(config.height) · \(config.fps) fps"
+            DiagnosticLog.write("Capture and encoder ready: \(config.width)x\(config.height) @ \(config.fps) fps")
+            completion()
+        }
     }
 
     private func startMetricsLogging() {

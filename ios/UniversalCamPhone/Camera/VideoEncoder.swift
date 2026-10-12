@@ -36,9 +36,13 @@ final class VideoEncoder {
 
     // MARK: - Lifecycle
 
-    func prepare(width: Int32, height: Int32, fps: Int32 = 60, bitrate: Int = 12_000_000) {
+    func prepare(width: Int32, height: Int32, fps: Int32 = 60, bitrate: Int = 12_000_000,
+                 completion: @escaping (Bool) -> Void) {
         encoderQueue.async { [weak self] in
-            self?.createSession(width: width, height: height, fps: fps, bitrate: bitrate)
+            guard let self else { return }
+            self.createSession(width: width, height: height, fps: fps, bitrate: bitrate)
+            let ready = self.session != nil
+            DispatchQueue.main.async { completion(ready) }
         }
     }
 
@@ -77,11 +81,14 @@ final class VideoEncoder {
         }
     }
 
-    func invalidate() {
+    func invalidate(completion: (() -> Void)? = nil) {
         encoderQueue.async { [weak self] in
-            guard let self, let session = self.session else { return }
-            VTCompressionSessionInvalidate(session)
-            self.session = nil
+            if let self, let session = self.session {
+                VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+                VTCompressionSessionInvalidate(session)
+                self.session = nil
+            }
+            if let completion { DispatchQueue.main.async(execute: completion) }
         }
     }
 
@@ -96,14 +103,15 @@ final class VideoEncoder {
     private func encodeOnQueue(_ sampleBuffer: CMSampleBuffer) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // Adapt to the actual pixel buffer dimensions. The front camera may deliver
-        // portrait-oriented buffers (e.g. 1080×1920) even when the session preset
-        // is hd1920x1080, because videoRotationAngle is metadata-only on some configs.
-        // Feeding mismatched buffers to a landscape VTCompressionSession squishes the image.
+        // Only encode the negotiated dimensions. Capture can still deliver old
+        // buffers around a format transition; they must not change the session.
         let bufW = Int32(CVPixelBufferGetWidth(pixelBuffer))
         let bufH = Int32(CVPixelBufferGetHeight(pixelBuffer))
         if session == nil || bufW != lastWidth || bufH != lastHeight {
-            createSession(width: bufW, height: bufH, fps: lastFPS, bitrate: lastBitrate)
+            // A late capture buffer from the previous mode must never rebuild
+            // the encoder back to the old dimensions after negotiation.
+            DiagnosticLog.record(.encodeDropped)
+            return
         }
 
         guard let session else { return }
@@ -172,7 +180,7 @@ final class VideoEncoder {
         }
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime,          value: kCFBooleanTrue)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        // Main profile supports CABAC for better compression (Baseline does not)
+        // High profile supports CABAC and the negotiated 4K modes.
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,      value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate,    value: NSNumber(value: bitrate))
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))

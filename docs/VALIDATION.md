@@ -155,3 +155,26 @@ GitHub run 41: shader checks, all five source modes (provider smoke), and frame
 channel mode/cache checks. The iOS arm64 build, unsigned packaging and 11
 simulator tests passed. Its Windows job was superseded during managed build by
 the preview cadence commit; it is not a complete installer result.
+
+
+## iOS 0.3.1 live capture mode reconfiguration
+
+- The user's 0.3.0 session at 09:31–09:35 on 2026-10-12 repeatedly lost
+  USB while switching a running stream; switching after stopping succeeded.
+  The user reports that the iPhone app closes during live mode changes.
+  No iOS crash report is available, so the exact exception is unconfirmed.
+- Reconfiguration now gates incoming capture samples atomically, drains and
+  invalidates the old encoder before changing camera format, stops AVCaptureSession
+  outside its configuration transaction, resets previous frame duration locks,
+  and acknowledges the mode only after the new compression session is ready.
+  Camera switching uses the same encoder barrier. Late buffers with old dimensions
+  are discarded instead of recreating an encoder for the previous format.
+- iOS version is 0.3.1, build 5. The Windows 0.3.0 protocol remains compatible.
+- Physical acceptance remains pending: repeatedly switch 4K30 / 1080p60 /
+  720p60 during streaming on the 6s Plus; switch front/rear; stop while a mode
+  is changing; unplug/reconnect; check no phone closure, stale acknowledgement,
+  wrong output dimensions or persistent frozen feed. Collect the iOS Analytics
+  crash report if it closes again. These code changes do not establish that
+  the reported crash is fixed on the device.
+- The Windows torch crash also recurred at 09:35:02 on 0.3.0, in ucrtbase.dll
+  (0xc0000409, parameter 5). It remains unresolved and is separate from this fix.

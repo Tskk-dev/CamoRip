@@ -80,6 +80,11 @@ final class CameraSession: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             do {
+                // Stop outside the configuration transaction. This also drains
+                // capture delivery on sessionQueue before replacing the format.
+                DiagnosticLog.write("Capture reconfiguration: stopping session")
+                if self.captureSession.isRunning { self.captureSession.stopRunning() }
+                DispatchQueue.main.async { self.isRunning = false }
                 if !self.configured { try self.setUp() }
                 self.requestedWidth = width
                 self.requestedHeight = height
@@ -91,6 +96,7 @@ final class CameraSession: NSObject, ObservableObject {
                 catch { result = .failure(error) }
                 self.captureSession.commitConfiguration()
                 self.setOutputOrientation()
+                DiagnosticLog.write("Capture reconfiguration: format committed")
                 DispatchQueue.main.async {
                     if case .success(let config) = result { self.configuration = config }
                     completion(result)
@@ -192,6 +198,9 @@ final class CameraSession: NSObject, ObservableObject {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
         if captureSession.canSetSessionPreset(.inputPriority) { captureSession.sessionPreset = .inputPriority }
+        // Do not carry a locked 60 fps duration into a 30 fps-only format.
+        device.activeVideoMinFrameDuration = .invalid
+        device.activeVideoMaxFrameDuration = .invalid
         device.activeFormat = format
         let duration = CMTime(value: 1, timescale: actualFPS)
         device.activeVideoMinFrameDuration = duration
@@ -202,6 +211,8 @@ final class CameraSession: NSObject, ObservableObject {
 
     private func changeCamera(to device: AVCaptureDevice, completion: ((CameraInfo?) -> Void)?) {
         do {
+            if captureSession.isRunning { captureSession.stopRunning() }
+            DispatchQueue.main.async { self.isRunning = false }
             if !configured { try setUp() }
             let replacement = try AVCaptureDeviceInput(device: device)
             captureSession.beginConfiguration()
