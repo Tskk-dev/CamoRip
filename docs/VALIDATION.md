@@ -224,3 +224,28 @@ the preview cadence commit; it is not a complete installer result.
   mode negotiation, sustained capture, adjustments, torch and thermals remain
   pending. Simulator checks do not exercise AVFoundation camera hardware or USB.
   Existing unresolved Windows torch-crash reports remain relevant.
+
+## iOS 0.3.4 camera-switch mirroring exception
+
+- A tester reports that the iOS app closes on camera switch on iOS 26. No
+  iOS crash report has been provided; the actual exception/stack is unconfirmed.
+- Inspection found that the replacement output connection was assigned
+  `isVideoMirrored` while `automaticallyAdjustsVideoMirroring` retained its
+  default true value. Apple's documentation states that manual assignment in
+  that state raises an exception. Swift do/catch does not catch Objective-C
+  exceptions. Disable automatic adjustment first on each new connection,
+  retaining the mirroring-support guard and unmirrored webcam output.
+- Three regression tests exercise setter ordering, new connections after
+  repeated switches, and unsupported connections, using a test double. They
+  do not exercise AVFoundation hardware. Camera-switch phase logs identify
+  input replacement, format commit and connection configuration.
+- Build both the iOS 18+ and iOS 15+ packages as version 0.3.4, build 8.
+  The existing Windows 0.3.3 companion remains compatible and unchanged.
+- Physical validation remains pending: switch front/rear repeatedly on iOS 26
+  while stopped and streaming, from phone and PC, with preview on/off and
+  after selecting 4K30. Also repeat on iPhone 6s Plus. If closure persists,
+  obtain the CamoRip/UniversalCam .ips report from iPhone Settings > Privacy
+  & Security > Analytics & Improvements > Analytics Data, and the phone's
+  Documents/UniversalCam.log. A successful build is not proof of a crash fix.
+- API reference:
+  https://developer.apple.com/documentation/avkit/choosing-a-camera-by-the-direction-it-faces?language=objc

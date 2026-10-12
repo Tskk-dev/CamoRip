@@ -39,8 +39,8 @@ targets:
       properties:
         CFBundleName: UniversalCam
         CFBundleDisplayName: CamoRip
-        CFBundleVersion: "7"
-        CFBundleShortVersionString: "0.3.3"
+        CFBundleVersion: "8"
+        CFBundleShortVersionString: "0.3.4"
         UILaunchStoryboardName: ""
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -60,6 +60,7 @@ targets:
     sources:
       - path: Tests
       - path: UniversalCamPhone/Camera/CameraControlProtocol.swift
+      - path: UniversalCamPhone/Camera/CaptureMirroring.swift
       - path: UniversalCamPhone/Camera/AnnexB.swift
       - path: UniversalCamPhone/UI/StreamingScreenDimmer.swift
       - path: UniversalCamPhone/Diagnostics/DiagnosticLog.swift

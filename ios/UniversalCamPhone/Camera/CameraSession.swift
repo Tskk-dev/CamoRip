@@ -211,6 +211,7 @@ final class CameraSession: NSObject, ObservableObject {
 
     private func changeCamera(to device: AVCaptureDevice, completion: ((CameraInfo?) -> Void)?) {
         do {
+            DiagnosticLog.write("Camera switch: begin to=\(device.position == .front ? "front" : "back")")
             if captureSession.isRunning { captureSession.stopRunning() }
             DispatchQueue.main.async { self.isRunning = false }
             if !configured { try setUp() }
@@ -224,6 +225,7 @@ final class CameraSession: NSObject, ObservableObject {
                 throw failure("Could not switch to this camera.")
             }
             captureSession.addInput(replacement)
+            DiagnosticLog.write("Camera switch: replacement input added; selecting format")
             let config: CaptureConfiguration
             do { config = try applyFormat(to: device) }
             catch {
@@ -233,13 +235,16 @@ final class CameraSession: NSObject, ObservableObject {
                 throw error
             }
             captureSession.commitConfiguration()
+            DiagnosticLog.write("Camera switch: format committed \(config.width)x\(config.height) @ \(config.fps)")
             setOutputOrientation()
+            DiagnosticLog.write("Camera switch: output connection configured")
             DispatchQueue.main.async {
                 self.currentCameraID = device.uniqueID
                 self.configuration = config
                 completion?(self.info(device))
             }
         } catch {
+            DiagnosticLog.write("Camera switch failed: \(error.localizedDescription)")
             report(error.localizedDescription)
             DispatchQueue.main.async { completion?(nil) }
         }
@@ -248,7 +253,7 @@ final class CameraSession: NSObject, ObservableObject {
     private func setOutputOrientation() {
         guard let connection = videoOutput.connection(with: .video) else { return }
         if connection.isVideoOrientationSupported { connection.videoOrientation = .landscapeRight }
-        if connection.isVideoMirroringSupported { connection.isVideoMirrored = false }
+        disableCaptureMirroring(on: connection)
     }
 
     private func info(_ device: AVCaptureDevice) -> CameraInfo {
