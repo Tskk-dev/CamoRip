@@ -1,4 +1,4 @@
-# CamoRip iPhone Webcam for Windows
+# CamoRip
 
 CamoRip turns an iPhone into a webcam for Windows 11. It streams video over USB or a paired local Wi-Fi network and exposes the camera to compatible apps such as Windows Camera and meeting software.
 
