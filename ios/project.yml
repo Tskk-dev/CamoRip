@@ -1,6 +1,6 @@
 name: CamoRip
 options:
-  bundleIdPrefix: com.universalcam
+  bundleIdPrefix: com.camorip
   deploymentTarget:
     iOS: "15.0"
   xcodeVersion: "15.0"
@@ -17,25 +17,25 @@ targets:
     platform: iOS
     deploymentTarget: "15.0"
     sources:
-      - path: UniversalCamPhone
+      - path: CamoRipPhone
         excludes:
           - "**/*.md"
       - path: Media.xcassets
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.universalcam.phone
+        PRODUCT_BUNDLE_IDENTIFIER: com.camorip.phone
         PRODUCT_NAME: CamoRip
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"       # iPhone only
         VALID_ARCHS: arm64
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""              # Set your Team ID here or via Xcode
-        INFOPLIST_FILE: UniversalCamPhone/Info.plist
+        INFOPLIST_FILE: CamoRipPhone/Info.plist
         ENABLE_BITCODE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
     info:
-      path: UniversalCamPhone/Info.plist
+      path: CamoRipPhone/Info.plist
       properties:
         CFBundleName: CamoRip
         CFBundleDisplayName: CamoRip
@@ -62,19 +62,19 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - path: Tests
-      - path: UniversalCamPhone/Camera/CameraControlProtocol.swift
-      - path: UniversalCamPhone/Camera/CaptureMirroring.swift
-      - path: UniversalCamPhone/Camera/CameraSession.swift
-      - path: UniversalCamPhone/Camera/CameraControls.swift
-      - path: UniversalCamPhone/Camera/VideoEncoder.swift
-      - path: UniversalCamPhone/Transport/ConnectionManager.swift
-      - path: UniversalCamPhone/Transport/USBTransport.swift
-      - path: UniversalCamPhone/Transport/StreamingDependencies.swift
-      - path: UniversalCamPhone/Transport/AutomaticPhoneTransport.swift
-      - path: UniversalCamPhone/Transport/WirelessPeer.swift
-      - path: UniversalCamPhone/Camera/AnnexB.swift
-      - path: UniversalCamPhone/UI/StreamingScreenDimmer.swift
-      - path: UniversalCamPhone/Diagnostics/DiagnosticLog.swift
+      - path: CamoRipPhone/Camera/CameraControlProtocol.swift
+      - path: CamoRipPhone/Camera/CaptureMirroring.swift
+      - path: CamoRipPhone/Camera/CameraSession.swift
+      - path: CamoRipPhone/Camera/CameraControls.swift
+      - path: CamoRipPhone/Camera/VideoEncoder.swift
+      - path: CamoRipPhone/Transport/ConnectionManager.swift
+      - path: CamoRipPhone/Transport/USBTransport.swift
+      - path: CamoRipPhone/Transport/StreamingDependencies.swift
+      - path: CamoRipPhone/Transport/AutomaticPhoneTransport.swift
+      - path: CamoRipPhone/Transport/WirelessPeer.swift
+      - path: CamoRipPhone/Camera/AnnexB.swift
+      - path: CamoRipPhone/UI/StreamingScreenDimmer.swift
+      - path: CamoRipPhone/Diagnostics/DiagnosticLog.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

@@ -23,14 +23,14 @@ OutputBaseFilename=CamoRip-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-AppMutex=Local\UniversalCam_USB_SingleInstance
+AppMutex=Local\CamoRip_USB_SingleInstance
 CloseApplications=yes
 RestartApplications=no
 LicenseFile=..\LICENSE
 
 [Files]
-Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "UCamMediaSource.dll,startup-check-data\*"
-Source: "{#PublishDir}\UCamMediaSource.dll"; DestDir: "{app}"; Flags: ignoreversion regserver
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "CamoRipMediaSource.dll,startup-check-data\*"
+Source: "{#PublishDir}\CamoRipMediaSource.dll"; DestDir: "{app}"; Flags: ignoreversion regserver
 
 [Icons]
 Name: "{group}\CamoRip"; Filename: "{app}\CamoRip.exe"
@@ -49,7 +49,6 @@ Filename: "{app}\CamoRip.exe"; Description: "Open CamoRip"; Flags: nowait postin
 
 [InstallDelete]
 ; Keep the installer AppId and existing install path to upgrade in place.
-Type: files; Name: "{app}\UniversalCam.exe"
 Type: files; Name: "{autodesktop}\USB iPhone Camera.lnk"
 Type: files; Name: "{autoprograms}\USB iPhone Camera\USB iPhone Camera.lnk"
 Type: files; Name: "{autoprograms}\USB iPhone Camera\Uninstall USB iPhone Camera.lnk"

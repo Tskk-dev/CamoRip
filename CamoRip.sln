@@ -5,15 +5,15 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{E82B6F4C-B02C-4A0C-9290-FD61F9B80644}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip", "src\UniversalCam\UniversalCam.csproj", "{F4370F6A-3697-4196-AAEF-CD5D0C8CB308}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip", "src\CamoRip\CamoRip.csproj", "{F4370F6A-3697-4196-AAEF-CD5D0C8CB308}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip.Core", "src\UniversalCam.Core\UniversalCam.Core.csproj", "{251BA6C6-0568-41F2-9CF1-079D60DA8D2B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip.Core", "src\CamoRip.Core\CamoRip.Core.csproj", "{251BA6C6-0568-41F2-9CF1-079D60DA8D2B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip.VirtualCamera", "src\UniversalCam.VirtualCamera\UniversalCam.VirtualCamera.csproj", "{3F7D5E2A-8C1B-4A9F-9E3C-7B2D1A5F8C4E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip.VirtualCamera", "src\CamoRip.VirtualCamera\CamoRip.VirtualCamera.csproj", "{3F7D5E2A-8C1B-4A9F-9E3C-7B2D1A5F8C4E}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{9B96F4B6-8D3D-45F6-B315-A9BED96092BB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip.Tests", "tests\UniversalCam.Tests\UniversalCam.Tests.csproj", "{517E641E-B241-42D7-923A-0AD17F788B2C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamoRip.Tests", "tests\CamoRip.Tests\CamoRip.Tests.csproj", "{517E641E-B241-42D7-923A-0AD17F788B2C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
