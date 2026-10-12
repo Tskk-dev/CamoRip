@@ -24,7 +24,7 @@ public sealed partial class MainWindow : Window
                 byte[] png = qr.GetGraphic(8);
                 using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
                 using (var writer = new Windows.Storage.Streams.DataWriter(stream.GetOutputStreamAt(0)))
-                { writer.WriteBytes(png); await writer.StoreAsync(); }
+                { writer.WriteBytes(png); await writer.StoreAsync(); writer.DetachStream(); }
                 stream.Seek(0);
                 var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
                 await bitmap.SetSourceAsync(stream);
@@ -261,7 +261,7 @@ public sealed partial class MainWindow : Window
             else Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering;
         }
         Preview.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        if (!visible) { Waiting.Text = _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for USB video"; Waiting.Visibility = Visibility.Visible; }
+        if (!visible) { Waiting.Text = _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for video"; Waiting.Visibility = Visibility.Visible; }
     }
     internal void HideToTray() { _hidden = true; UpdatePreviewVisibility(); AppWindow.Hide(); }
     internal void ShowFromTray()

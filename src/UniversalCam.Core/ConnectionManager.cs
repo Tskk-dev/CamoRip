@@ -24,7 +24,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     public TransportState State { get; private set; } = TransportState.Idle;
     public TransportType ActiveTransport { get; private set; } = TransportType.None;
     public string DeviceName { get; private set; } = "iPhone";
-    public string StatusMessage { get; private set; } = "Connect the iPhone over USB.";
+    public string StatusMessage { get; private set; } = "Connect an iPhone over USB or pair over Wi-Fi.";
     public bool IsStreaming { get; private set; }
     public string CaptureResolution { get; private set; } = string.Empty;
     public int CaptureFrameRate { get; private set; }

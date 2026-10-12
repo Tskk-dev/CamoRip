@@ -142,7 +142,7 @@ internal sealed class StreamingService : IAsyncDisposable
 
     private void OnConnectionState(object? sender, TransportState state)
     {
-        _frames.Reset($"USB state {state}");
+        _frames.Reset($"Connection state {state}");
         _arrivals.Reset(); Volatile.Write(ref _controlRttMs, -1);
         try { _camera?.OnConnectionStateChanged(sender, state); }
         catch (Exception ex) { App.Log(ex); }

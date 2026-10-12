@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using UniversalCam.Core;
 using UniversalCam.Core.Protocol;
 using UniversalCam.Core.Transport;
 
@@ -61,12 +62,14 @@ public sealed class WirelessTests
         try
         {
             await using var transport = new WirelessTransport(directory, 0, advertise: false);
+            var usb = new FakeUsb();
+            await using var automatic = new AutomaticTransport(usb, transport);
             using var qr = Decode(transport.BeginPairing()); var fields = qr.RootElement;
             string fingerprint = fields.GetProperty("fingerprint").GetString()!;
             string id = fields.GetProperty("id").GetString()!;
             string token = fields.GetProperty("token").GetString()!;
             var received = new TaskCompletionSource<ControlMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-            transport.ControlMessageReceived += (_, message) => received.TrySetResult(message);
+            automatic.ControlMessageReceived += (_, message) => received.TrySetResult(message);
             async Task<(TcpClient, SslStream, JsonDocument)> Connect(string credential, bool pairing)
             {
                 var client = new TcpClient(); await client.ConnectAsync("127.0.0.1", transport.ListeningPort);
@@ -88,6 +91,11 @@ public sealed class WirelessTests
                 byte[] json = new Hello { Capabilities = ["h264"] }.ToJsonBytes();
                 await first.Item2.WriteAsync(new byte[] { 0 }.Concat(json).Concat(new byte[] { 10 }).ToArray());
                 Assert.IsType<Hello>(await received.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(TransportType.WiFi, automatic.Kind);
+                usb.ChangeState(TransportState.Connected);
+                Assert.Equal(TransportType.USB, automatic.Kind);
+                usb.ChangeState(TransportState.Disconnected);
+                Assert.Equal(TransportType.None, automatic.Kind);
             }
             var second = await Connect(permanent, false);
             using (second.Item1) using (second.Item2) using (second.Item3)
@@ -97,5 +105,22 @@ public sealed class WirelessTests
                 Assert.False(rejected.Item3.RootElement.GetProperty("ok").GetBoolean());
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private sealed class FakeUsb : IConnectionTransport
+    {
+        public event EventHandler<ControlMessage>? ControlMessageReceived { add { } remove { } }
+        public event EventHandler<MediaFrame>? FrameReceived { add { } remove { } }
+        public event EventHandler<string>? Diagnostic { add { } remove { } }
+        public event EventHandler<TransportState>? StateChanged;
+        public TransportState State { get; private set; }
+        public string StatusMessage => "Test USB";
+        public int ConnectionGeneration => 1;
+        public TransportType Kind => TransportType.USB;
+        public void ChangeState(TransportState state) { State = state; StateChanged?.Invoke(this, state); }
+        public Task ConnectAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendControlAsync(ControlMessage message, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendControlForConnectionAsync(ControlMessage message, int generation, CancellationToken ct = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

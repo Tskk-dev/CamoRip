@@ -100,7 +100,7 @@ public sealed class WirelessIdentity : IDisposable
     internal static bool IsLocalPeer(IPAddress remote)
     {
         if (IPAddress.IsLoopback(remote)) return true; // loopback integration tests
-        if (remote.AddressFamily != AddressFamily.InterNetwork) return false;
+        if (remote.AddressFamily != AddressFamily.InterNetwork || !IsPrivateAddress(remote)) return false;
         var r = remote.GetAddressBytes();
         return LocalAddresses().Any(a => { var l = a.Address.GetAddressBytes(); var m = a.IPv4Mask.GetAddressBytes();
             return Enumerable.Range(0, 4).All(i => (l[i] & m[i]) == (r[i] & m[i])); });

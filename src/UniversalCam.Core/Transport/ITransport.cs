@@ -3,7 +3,7 @@ using UniversalCam.Core.Protocol;
 namespace UniversalCam.Core.Transport;
 
 /// <summary>
-/// Interface for the local Apple USB tunnel.
+/// Framed camera controls and media over a local connection.
 /// </summary>
 public interface ITransport : IAsyncDisposable
 {
