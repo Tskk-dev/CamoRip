@@ -13,14 +13,14 @@ Record the exact commit, Actions run URL, Windows build, iOS version/jailbreak, 
 
 Use the Actions result to establish which of these passed for a particular commit. GitHub-hosted macOS does not test this iPhone. Windows runners also do not establish that the virtual camera activates on the target Windows 11 PC.
 
-## Physical acceptance checklist — pending until performed
+## Physical acceptance checklist â€” pending until performed
 
 - [ ] Install/sign the IPA on this iPhone using its actual jailbreak route; record the method. Exercise free Apple ID fallback if needed.
 - [ ] Grant camera permission; separately deny it and verify a useful error and recovery.
 - [ ] Connect and trust with a data cable; establish USB video with Wi-Fi disabled.
 - [ ] Start/stop on the phone and PC. Confirm stopped video becomes neutral in camera clients and the phone can sleep after stopping.
 - [ ] Switch front/rear repeatedly. Confirm actual reported capture dimensions, keyframe recovery, and stable output.
-- [ ] Run the rear camera at native 1920×1080 at 60 fps for at least 15 minutes. Record output rate, latency, phone temperature/thermal changes, and any stalls.
+- [ ] Run the rear camera at native 1920Ã—1080 at 60 fps for at least 15 minutes. Record output rate, latency, phone temperature/thermal changes, and any stalls.
 - [ ] While streaming, unplug/reconnect ten times. Verify the old socket/capture/decoder state is discarded and the new session recovers without restarting apps.
 - [ ] Open Windows camera enumeration and a preview app. Verify **CamoRip** appears and produces frames.
 - [ ] Select the camera in at least one intended meeting app, e.g. Zoom or Teams; record the actual app and whether its preview/call is stable.
@@ -83,7 +83,7 @@ decode/publish rates, queue drops/recoveries, stage maximum times, allocations,
 and GC counts. Physical sustained 1080p60 and meeting-client smoothness remain
 pending for v4.
 
-## CamoRip v0.2 desktop acceptance — pending physical review
+## CamoRip v0.2 desktop acceptance â€” pending physical review
 
 ### 0.2.1 startup and USB regression (2026-10-12)
 
@@ -159,7 +159,7 @@ the preview cadence commit; it is not a complete installer result.
 
 ## iOS 0.3.1 live capture mode reconfiguration
 
-- The user's 0.3.0 session at 09:31–09:35 on 2026-10-12 repeatedly lost
+- The user's 0.3.0 session at 09:31â€“09:35 on 2026-10-12 repeatedly lost
   USB while switching a running stream; switching after stopping succeeded.
   The user reports that the iPhone app closes during live mode changes.
   No iOS crash report is available, so the exact exception is unconfirmed.
@@ -182,11 +182,11 @@ the preview cadence commit; it is not a complete installer result.
 ## 0.3.2 quality controls and latency investigation
 
 - Windows adds Efficient/Balanced/High/Custom quality with an explicit Apply
-  button and a 1–50 Mbps custom target. Save only after acknowledgement.
+  button and a 1â€“50 Mbps custom target. Save only after acknowledgement.
   Balanced preserves current defaults; High doubles them (1080p60: 24 Mbps;
   4K30: 40 Mbps). bitrate_control_v1 gates the controls; older phones reconnect
   with balanced defaults rather than unsupported high targets.
-- The phone validates 0.5–50 Mbps, checks the bitrate property setter, requests
+- The phone validates 0.5â€“50 Mbps, checks the bitrate property setter, requests
   an optional one-frame compressor delay bound with fallback, and logs the bound
   and queried hardware-encoder status. The target is an average bitrate;
   Windows separately logs actual compressed payload Mbps.
@@ -196,9 +196,9 @@ the preview cadence commit; it is not a complete installer result.
   clock for control RTT. These measurements exclude capture/phone encoding,
   delivery before packet arrival, downstream app buffering and display scanout.
   Control RTT and the existing stage activity ages are not full video latency.
-- The available Windows 0.3.0 log (2026-10-12 09:51–09:53) shows approximately
-  60 fps at 720p60, hardware decoding, final decode averages about 1.7–2.2 ms,
-  no recorded queue drops/publication failures and preview around 51–58 fps.
+- The available Windows 0.3.0 log (2026-10-12 09:51â€“09:53) shows approximately
+  60 fps at 720p60, hardware decoding, final decode averages about 1.7â€“2.2 ms,
+  no recorded queue drops/publication failures and preview around 51â€“58 fps.
   No sustained PC decoder backlog is recorded. The user clarified a perceived
   delay of a few milliseconds; exact camera-to-screen latency is unmeasured.
 - Local targeted checks: 32 passed. Self-contained WinUI publish succeeded.
@@ -208,3 +208,19 @@ the preview cadence commit; it is not a complete installer result.
   logs and phone encoder status, and film a source timer/LED alongside the
   displayed feed to measure full delay. Keep mode/exposure/app identical for
   any cable/port comparison. No visual UI validation is required by the user.
+
+
+## 0.3.3 iPhone 16 build and monochrome identity
+
+- A separate iOS 18 minimum arm64 IPA uses exactly the same source, H.264 modes,
+  USB transport, remote camera controls and app identity as the iOS 15 package.
+  Both build profiles remain in CI; the modern profile selects an iPhone 16
+  simulator and the legacy profile selects an available compatible iPhone.
+- The shared icon is a black circle on white, generated from
+  `assets/branding/camorip.svg` by `scripts/generate-icons.py` (Pillow).
+  iOS uses an opaque 1024-pixel icon; Windows embeds 16–256-pixel ICO entries
+  for its executable, window, tray and installer shortcuts.
+- Physical iPhone 16 installation/signing, USB-C pairing/reconnect, front/rear
+  mode negotiation, sustained capture, adjustments, torch and thermals remain
+  pending. Simulator checks do not exercise AVFoundation camera hardware or USB.
+  Existing unresolved Windows torch-crash reports remain relevant.
