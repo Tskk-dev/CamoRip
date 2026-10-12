@@ -1,4 +1,4 @@
-# USB iPhone Camera
+# CamoRip
 
 Use an iPhone 6s Plus as a Windows 11 webcam through a Lightning USB cable. The iPhone app captures camera video with AVFoundation and encodes H.264 with VideoToolbox. The Windows companion reads it through Apple's local USB device service, decodes it with Windows Media Foundation, and exposes **USB iPhone Camera** to camera apps using the Windows 11 virtual camera API.
 
