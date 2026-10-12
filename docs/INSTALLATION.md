@@ -6,13 +6,22 @@ Install Apple Devices or iTunes from Apple's supported distribution and connect 
 
 Download the Windows artifact from a successful Actions run and run its setup executable. Administrator elevation installs and registers `UCamMediaSource.dll`; the companion itself runs as the signed-in user. Builds are not Authenticode-signed, so Windows may show an unknown-publisher prompt. Verify that the download is from this repository and commit.
 
-Keep the companion running while using the camera. Choose **USB iPhone Camera** in the target application's camera menu after the companion reports that the Windows camera started. If an app caches the device list, reopen its camera settings or restart that app.
+Keep the companion running while using the camera. Choose **CamoRip** in the target application's camera menu after the companion reports that the Windows camera started. If an app caches the device list, reopen its camera settings or restart that app.
 
 Logs are stored under `%LOCALAPPDATA%/UniversalCam/Logs/latest.log`. Video is not intentionally written to the log. Session frames use a protected temporary mapping under the same application's local data directory.
 
 ## iPhone: unsigned IPA
 
-The CI artifact is an **unsigned arm64 IPA targeting iOS 15**. A jailbreak alone does not establish that it can install arbitrary unsigned apps. Before relying on an install route, check the actual iOS version, jailbreak, installer, signature handling, and entitlements on this phone. Use the existing installer and its documented signing requirements. Do not mark this step passed until the app launches, requests Camera permission, and remains usable after relaunch.
+CI produces two **unsigned arm64 IPAs** from the same source:
+
+- `camorip-ios-unsigned`: `CamoRip-ios15-unsigned.ipa`, iOS 15 or later, including the iPhone 6s Plus.
+- `camorip-iphone16-unsigned`: `CamoRip-iphone16-ios18-unsigned.ipa`, iOS 18 or later, intended for iPhone 16. This profile also runs on other compatible iPhones; it is not a different feature tier.
+
+Both packages preserve camera modes, phone-side adjustments, torch, quality controls, screen dimming and preview controls. They share the bundle identifier and replace one another when installed. Use the matching Windows companion for all controls. The iPhone 16 uses a USB-C **data** cable and the same Apple Devices pairing/trust procedure; no Lightning adapter is required. Simulator checks and builds do not establish physical USB streaming on that model.
+
+Sign the iPhone 16 IPA with an installer supported by its actual iOS version (for example a free Apple ID signing route); do not assume the older phone's jailbreak install method applies.
+
+ A jailbreak alone does not establish that it can install arbitrary unsigned apps. Before relying on an install route, check the actual iOS version, jailbreak, installer, signature handling, and entitlements on this phone. Use the existing installer and its documented signing requirements. Do not mark this step passed until the app launches, requests Camera permission, and remains usable after relaunch.
 
 If that route rejects the package, use an installer that signs with a free Apple ID/Personal Team. Follow its trusted local signing flow. Personal Team provisioning profiles expire after seven days and require renewal; CI does not bypass this. [Apple account guidance](https://developer.apple.com/help/account/basics/about-your-developer-account).
 

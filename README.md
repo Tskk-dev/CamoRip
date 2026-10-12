@@ -1,6 +1,6 @@
 # CamoRip
 
-Use an iPhone 6s Plus as a Windows 11 webcam through a Lightning USB cable. The iPhone app captures camera video with AVFoundation and encodes H.264 with VideoToolbox. The Windows companion reads it through Apple's local USB device service, decodes it with Windows Media Foundation, and exposes **CamoRip** to camera apps using the Windows 11 virtual camera API.
+Use an iPhone 6s Plus or iPhone 16 as a Windows 11 webcam through a USB data cable. The iPhone app captures camera video with AVFoundation and encodes H.264 with VideoToolbox. The Windows companion reads it through Apple's local USB device service, decodes it with Windows Media Foundation, and exposes **CamoRip** to camera apps using the Windows 11 virtual camera API.
 
 I made this app because 
 # FUCK CAMO STUDIO AND EVERY SINGLE FUCKING APP THAT NEEDS PAYMENT FOR THIS SHIT LOL I WILL NOT PAY FOR YOUR SHIT. 
@@ -17,14 +17,14 @@ See [CamoRip architecture and validation status](docs/CAMORIP.md).
 
 - Windows 11 **x64**, build 22000 or newer. The intended PC is build 26300.9457.
 - Apple Devices or iTunes installed, with its Apple Mobile Device service running.
-- iPhone 6s Plus running iOS 15.x, a data-capable Lightning cable, and camera permission.
+- iPhone 6s Plus on iOS 15 with a Lightning data cable, or iPhone 16 on iOS 18 or later with a USB-C data cable; camera permission is required.
 - An existing jailbreak-compatible signing/install route, or a free Apple ID signing tool. The CI IPA is unsigned and is not automatically installable on every jailbreak.
 
 Choose 720p30/60, 1080p30/60, or 4K30 in Camera → Resolution and frame rate. Only modes reported by the active iPhone camera appear. Update both apps to 0.3.0 for the selector. Capture and Windows webcam dimensions/rate follow the acknowledged mode. Changing mode restarts the webcam; a meeting app holding its old format may need to reopen the camera. The last requested mode is saved; front cameras may negotiate a smaller mode. 4K increases decoder, memory and thermal load. Physical 4K30 operation remains to be validated.
 
 ## Install and use
 
-1. Open this repository's **Actions → Build webcam apps**, select a successful run, and download `camorip-windows-x64` and `camorip-ios-unsigned`.
+1. Open this repository's **Actions → Build webcam apps**, select a successful run, and download `camorip-windows-x64` and either `camorip-ios-unsigned` (iOS 15+) or `camorip-iphone16-unsigned` (iOS 18+). Both iPhone packages have the same features and app identity; install only one.
 2. Run the Windows setup executable. Administrator access registers the Media Foundation camera source; run the installed companion normally afterward.
 3. Sign/install the unsigned IPA with your confirmed iPhone install route. Keep the app open and allow Camera access.
 4. Connect the cable, unlock the iPhone, and accept **Trust This Computer**. Open both companions.

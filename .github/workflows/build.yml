@@ -53,13 +53,30 @@ jobs:
           if-no-files-found: ignore
 
   ios:
+    name: iOS (${{ matrix.profile }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: legacy
+            minimum_ios: '15.0'
+            minimum_major: 15
+            model: any
+            ipa: CamoRip-ios15-unsigned.ipa
+            artifact: camorip-ios-unsigned
+          - profile: iphone16
+            minimum_ios: '18.0'
+            minimum_major: 18
+            model: iPhone 16
+            ipa: CamoRip-iphone16-ios18-unsigned.ipa
+            artifact: camorip-iphone16-unsigned
     runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Build unsigned iOS 15 app
+      - name: Build unsigned ${{ matrix.profile }} app
         working-directory: ios
         run: |
           set -euo pipefail
@@ -68,36 +85,36 @@ jobs:
             -scheme UniversalCamPhone -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath ../artifacts/ios \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+            IPHONEOS_DEPLOYMENT_TARGET=${{ matrix.minimum_ios }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Package and check unsigned IPA
         run: |
           set -euo pipefail
           APP=artifacts/ios/Build/Products/Release-iphoneos/UniversalCam.app
           test -d "$APP"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '15.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '${{ matrix.minimum_ios }}'
           xcrun lipo "$APP/UniversalCam" -verify_arch arm64
           mkdir -p artifacts/ipa/Payload
           cp -R "$APP" artifacts/ipa/Payload/
-          (cd artifacts/ipa && zip -qr ../CamoRip-ios15-unsigned.ipa Payload)
-          unzip -t artifacts/CamoRip-ios15-unsigned.ipa
+          (cd artifacts/ipa && zip -qr ../${{ matrix.ipa }} Payload)
+          unzip -t artifacts/${{ matrix.ipa }}
       - name: Check phone display lifecycle and video packet conversion
         working-directory: ios
         run: |
           set -euo pipefail
-          SIMULATOR=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for group in d["devices"].values() for v in group if v["name"].startswith("iPhone")))')
+          SIMULATOR=$(python3 ../scripts/select-ios-simulator.py --minimum-ios ${{ matrix.minimum_major }} --model '${{ matrix.model }}')
           xcodebuild test -project UniversalCamPhone.xcodeproj -scheme UniversalCamPhone \
             -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -derivedDataPath ../artifacts/ios-tests \
             -resultBundlePath ../artifacts/PhoneEfficiencyTests.xcresult \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+            IPHONEOS_DEPLOYMENT_TARGET=${{ matrix.minimum_ios }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-test-results
+          name: ios-test-results-${{ matrix.profile }}
           path: artifacts/PhoneEfficiencyTests.xcresult
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
-          name: camorip-ios-unsigned
-          path: artifacts/CamoRip-ios15-unsigned.ipa
+          name: ${{ matrix.artifact }}
+          path: artifacts/${{ matrix.ipa }}
           if-no-files-found: error
