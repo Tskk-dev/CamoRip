@@ -6,11 +6,13 @@ For Wi-Fi, follow [wireless pairing](WIRELESS.md). Apple device support is requi
 
 Install Apple Devices or iTunes from Apple's supported distribution and connect the phone once. Confirm the Apple application can see it. Unlock the phone and accept Trust This Computer.
 
-Download the Windows artifact from a successful Actions run and run its setup executable. Administrator elevation installs and registers `UCamMediaSource.dll`; the companion itself runs as the signed-in user. Builds are not Authenticode-signed, so Windows may show an unknown-publisher prompt. Verify that the download is from this repository and commit.
+Download the Windows artifact from a successful Actions run and run its setup executable. Administrator elevation installs and registers `CamoRipMediaSource.dll`; the companion itself runs as the signed-in user. Builds are not Authenticode-signed, so Windows may show an unknown-publisher prompt. Verify that the download is from this repository and commit.
 
 Keep the companion running while using the camera. Choose **CamoRip** in the target application's camera menu after the companion reports that the Windows camera started. If an app caches the device list, reopen its camera settings or restart that app.
 
-Logs are stored under `%LOCALAPPDATA%/UniversalCam/Logs/latest.log`. Video is not intentionally written to the log. Session frames use a protected temporary mapping under the same application's local data directory.
+Logs are stored under `%LOCALAPPDATA%/CamoRip/Logs/latest.log`. Video is not intentionally written to the log. Session frames use a protected temporary mapping under the same application's local data directory.
+
+The CamoRip identifier update uses a new Windows settings directory and iOS app identity. Install the new phone app, grant Camera and Local Network access, and pair it again. Previous settings and pairing credentials are not imported. Close older companions before installing this update.
 
 ## iPhone: unsigned IPA
 

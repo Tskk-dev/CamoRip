@@ -1,0 +1,14 @@
+LIBRARY CamoRipMediaSource
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
+    DllRegisterServer PRIVATE
+    DllUnregisterServer PRIVATE
+    CamoRipOpenWriter
+    CamoRipOpenWriterMode
+    CamoRipWriteFrame
+    CamoRipCloseWriter
+    CamoRipStartCamera
+    CamoRipStartCameraMode
+    CamoRipStopCamera
+    CamoRipRemoveCamera

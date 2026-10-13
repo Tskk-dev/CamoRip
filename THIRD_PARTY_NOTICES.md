@@ -5,7 +5,7 @@
 - Project: https://github.com/Shivinder-s/universal-cam
 - Reviewed revision: `48d11a5756dde98a656578414fddaffaf03419b0`
 - License: MIT; original notice is preserved in `LICENSE`.
-- Reused and adapted: Swift camera/VideoToolbox encoder concepts and code, protocol framing/control messages, Windows preview/frame conversion and tests. The upstream virtual camera scaffolding, Wi-Fi, audio, and DirectShow paths are superseded or removed for v1.
+- CamoRip began with adapted camera, encoder, protocol, frame conversion and test code from this revision. The unused frame queue and full-range BGRA converter have been removed. The encoder, local preview and frame definitions have replacement implementations. Other camera, protocol and test code remains derived from this project; its copyright notice is retained.
 
 ## Microsoft platform APIs and design references
 

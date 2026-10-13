@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.24)
+project(CamoRipDecoder LANGUAGES CXX)
+if(NOT WIN32)
+  message(FATAL_ERROR "The H.264 decoder uses Windows Media Foundation.")
+endif()
+add_library(CamoRip.Decoder SHARED Decoder.cpp Preview.cpp)
+target_compile_features(CamoRip.Decoder PRIVATE cxx_std_17)
+target_compile_definitions(CamoRip.Decoder PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+target_compile_options(CamoRip.Decoder PRIVATE /W4 /EHsc /permissive-)
+target_link_libraries(CamoRip.Decoder PRIVATE mfplat mfuuid wmcodecdspuuid ole32 oleaut32 d3d11 dxgi d3dcompiler)
+set_property(TARGET CamoRip.Decoder PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+# Headless shader correctness checks use WARP only inside this test executable.
+# The shipped preview always requests D3D_DRIVER_TYPE_HARDWARE.
+add_executable(PreviewTests PreviewTests.cpp)
+target_compile_features(PreviewTests PRIVATE cxx_std_17)
+target_compile_definitions(PreviewTests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(PreviewTests PRIVATE /W4 /EHsc /permissive-)
+target_link_libraries(PreviewTests PRIVATE d3d11 dxgi d3dcompiler)
+set_property(TARGET PreviewTests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+enable_testing()
+add_test(NAME PreviewTests COMMAND PreviewTests)
+set_tests_properties(PreviewTests PROPERTIES TIMEOUT 30)

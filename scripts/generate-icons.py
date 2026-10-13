@@ -41,7 +41,7 @@ def main():
         entries.append(struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0,
                                    1, 32, len(payload), offset))
         offset += len(payload)
-    (ROOT / "src/UniversalCam/camorip.ico").write_bytes(
+    (ROOT / "src/CamoRip/camorip.ico").write_bytes(
         struct.pack("<HHH", 0, 1, len(sizes)) + b"".join(entries) + b"".join(payloads))
 
 

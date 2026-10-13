@@ -35,4 +35,4 @@ See the [installation guide](docs/INSTALLATION.md) and [wireless pairing guide](
 
 ## License
 
-CamoRip is MIT licensed. It includes adapted code from [UniversalCam](https://github.com/Shivinder-s/universal-cam).
+CamoRip is MIT licensed. Dependency notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

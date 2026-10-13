@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "CamoRip (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "CamoRip (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
