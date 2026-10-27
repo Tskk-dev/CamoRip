@@ -20,13 +20,13 @@ public sealed partial class MainWindow : Window
     private async void onAirPreview(object sender, RoutedEventArgs e)
     {
         if (!_ready || _updating || !airRequested) return;
-        await applyAir();
+        await applyAir(previewOnly: true);
         Refresh();
     }
 
     private void drawAirOverlay()
     {
-        if (AirOverlay is null) return;
+        if (AirOverlay is null || AirDetectionStatus is null) return;
         AirOverlay.Visibility = AirDetectionStatus.Visibility = airRequested ? Visibility.Visible : Visibility.Collapsed;
         AirOverlay.Children.Clear();
         if (!airRequested) return;
@@ -66,7 +66,7 @@ public sealed partial class MainWindow : Window
 
     private async void onAirCalibrate(object sender, RoutedEventArgs e) => await applyAir(recalibrate: true);
 
-    private async Task applyAir(bool recalibrate = false)
+    private async Task applyAir(bool recalibrate = false, bool previewOnly = false)
     {
         try
         {
@@ -75,11 +75,14 @@ public sealed partial class MainWindow : Window
                 Preview = AirCalibrationPreview.IsOn && _service.Connection.SupportsAirPreview,
                 Recalibrate = recalibrate,
                 X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value } : new AirConfigure();
+            if (previewOnly && airRequested)
+                settings = airSettings with { Enabled = true, Preview = settings.Preview, Recalibrate = false };
             await _service.Connection.ConfigureAirAsync(settings);
             airSettings = settings;
             if (recalibrate) { airMask = 0; airUpdateTicks = 0; }
             drawAirOverlay();
-            AirStatus.Text = airRequested ? "Calibrating: keep hands out of all six zones." : "AIR off";
+            AirStatus.Text = !airRequested ? "AIR off" : recalibrate ? "Calibrating: keep hands out of all six zones."
+                : settings.Preview ? "AIR active · calibration video on" : "AIR active · video off";
         }
         catch (Exception ex)
         {
@@ -387,7 +390,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePreviewVisibility()
     {
-        _service.PreviewFps = airRequested && AirCalibrationPreview.IsOn ? 30 : App.Settings.PreviewFps;
+        _service.PreviewFps = airRequested && AirCalibrationPreview.IsOn && App.Settings.PreviewFps == 0 ? 30 : App.Settings.PreviewFps;
         _service.PreviewVisible = !_exiting && !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
         bool visible = _service.PreviewVisible && _service.PreviewFps > 0 && _service.Streaming;
         if (_rendering != visible)
