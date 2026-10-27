@@ -43,13 +43,6 @@ struct ContentView: View {
                     ScrollView {
                         VStack(spacing: 10) {
                             Text(connection.formatLabel).font(.headline)
-                            if connection.airConfiguration.enabled {
-                                Text("AIR mode · six brightness zones · no video transmission")
-                                    .font(.callout).multilineTextAlignment(.center)
-                                Text("Hold the phone horizontally. Position and recalibrate the zones from the PC.")
-                                    .font(.caption).multilineTextAlignment(.center)
-                                Button("Stop AIR inputs") { connection.stopStreaming() }.buttonStyle(.borderedProminent)
-                            }
                             if connection.state == .streaming {
                                 Text("Diagnostics: Files › On My iPhone › CamoRip › CamoRip.log")
                                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -109,6 +102,9 @@ struct ContentView: View {
                     .padding(20)
                     .frame(maxWidth: .infinity)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                    .opacity(connection.airConfiguration.enabled ? 0 : 1)
+                    .allowsHitTesting(!connection.airConfiguration.enabled)
+                    .accessibilityHidden(connection.airConfiguration.enabled)
                 }
                 .foregroundStyle(.white)
                 .padding()
@@ -126,6 +122,17 @@ struct ContentView: View {
                 .foregroundStyle(.white)
                 .padding(32)
             } else { ProgressView().tint(.white) }
+            if connection.airConfiguration.enabled {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Button("Stop AIR") { connection.stopStreaming() }.buttonStyle(.borderedProminent)
+                        Button(showStreamingPreview ? "Hide zones" : "Show zones") { showStreamingPreview.toggle() }
+                            .buttonStyle(.bordered)
+                        Spacer()
+                    }
+                }.padding().foregroundStyle(.white).accessibilityHidden(screenDimmer.isDimmed)
+            }
             if screenDimmer.isDimmed {
                 Button { screenDimmer.userInteracted() } label: {
                     ZStack {
