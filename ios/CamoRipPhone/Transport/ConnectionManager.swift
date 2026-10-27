@@ -14,6 +14,9 @@ final class ConnectionManager: ObservableObject {
     @Published private(set) var usbListening = false
     @Published private(set) var wirelessStatus = "Scan the QR code in CamoRip on your PC"
     @Published private(set) var wantsStreaming = false
+    @Published private(set) var airConfiguration = AirConfiguration()
+    @Published private(set) var airMask = 0
+    private let airDetector = AirZoneDetector()
     @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
     weak var cameraSession: PhoneCapture?
 
@@ -102,6 +105,7 @@ final class ConnectionManager: ObservableObject {
     /// Called by the phone's Start button or a Windows start_stream request.
     /// The callback waits for capture configuration before enabling frame delivery.
     func startStreaming(notifyPeer: Bool = true) {
+        if airConfiguration.enabled { transport.sendControl(.stopStream); return }
         guard activeTransport != nil else { return }
         guard applicationIsActive() else {
             fail(code: "app_in_background", message: "Open CamoRip on the iPhone to start video.")
@@ -132,6 +136,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     func stopStreaming(notifyPeer: Bool = true) {
+        if airConfiguration.enabled { configureAir(AirConfiguration()) }
         cameraSession?.turnTorchOff()
         startRequested = false
         pendingStartNotifiesPeer = false
@@ -148,6 +153,17 @@ final class ConnectionManager: ObservableObject {
     }
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
+        if airDetector.enabled {
+            if let update = airDetector.process(sample) {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.airConfiguration.enabled, update.generation == self.airDetector.generation,
+                          self.activeTransport != nil else { return }
+                    self.airMask = update.mask
+                    self.transport.sendControl(.airState(mask: update.mask, enabled: true))
+                }
+            }
+            return
+        }
         streamingLock.lock()
         defer { streamingLock.unlock() }
         // Enqueue atomically with the gate check, so invalidation cannot be
@@ -222,6 +238,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func resetSession() {
+        configureAir(AirConfiguration())
         cameraSession?.turnTorchOff()
         handshakeGeneration += 1
         operationGeneration += 1
@@ -246,8 +263,18 @@ final class ConnectionManager: ObservableObject {
             fail(code: "invalid_control", message: "Windows sent an invalid control message."); return
         }
         switch message {
+        case .airConfigure(let settings):
+            guard settings.isValid else { fail(code: "invalid_air_settings", message: "Invalid AIR calibration settings."); return }
+            if settings.enabled {
+                guard activeTransport != nil, applicationIsActive(), cameraIsAuthorized() else {
+                    fail(code: "camera_unavailable", message: "Open the app and allow Camera access before starting AIR."); return
+                }
+                stopStreaming()
+                cameraSession?.start()
+            }
+            configureAir(settings)
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "air_zones_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
@@ -339,6 +366,14 @@ final class ConnectionManager: ObservableObject {
         }
     }
 
+    private func configureAir(_ settings: AirConfiguration) {
+        airConfiguration = settings
+        airDetector.configure(settings)
+        airMask = 0
+        setIdleTimerDisabled(settings.enabled)
+        if activeTransport != nil { transport.sendControl(.airState(mask: 0, enabled: settings.enabled)) }
+    }
+
     private func startMetricsLogging() {
         guard enableTimers else { return }
         metricsTimer?.invalidate()
@@ -390,6 +425,8 @@ final class ConnectionManager: ObservableObject {
 // MARK: - Control Message Types
 
 enum ControlMessage: Codable {
+    case airConfigure(AirConfiguration)
+    case airState(mask: Int, enabled: Bool)
     case hello(deviceName: String, capabilities: [String])
     case welcome
     case getCameraState
@@ -410,6 +447,7 @@ enum ControlMessage: Codable {
     case orientationChanged(orientation: String)
 
     private enum CodingKeys: String, CodingKey {
+        case mask, enabled
         case request_id, camera_id, values, error, torch_available, torch_on, auto_exposure_supported, auto_focus_supported, auto_white_balance_supported, ranges
         case type, deviceName, capabilities, resolution, fps, codec, bitrate, ts
         case cameraID, cameraName, cameras, currentCameraID
@@ -419,6 +457,8 @@ enum ControlMessage: Codable {
 
     var type: String {
         switch self {
+        case .airConfigure: return "air_configure"
+        case .airState: return "air_state"
         case .getCameraState:      return "get_camera_state"
         case .cameraSettings:      return "camera_settings"
         case .cameraState:         return "camera_state"
@@ -446,6 +486,10 @@ enum ControlMessage: Codable {
         try container.encode(type, forKey: .type)
 
         switch self {
+        case .airConfigure(let configuration): try configuration.encode(to: encoder)
+        case .airState(let mask, let enabled):
+            try container.encode(mask, forKey: .mask)
+            try container.encode(enabled, forKey: .enabled)
         case .getCameraState: break
         case .cameraSettings(let request):
             try request.encode(to: encoder)
@@ -491,6 +535,8 @@ enum ControlMessage: Codable {
         let type = try container.decode(String.self, forKey: .type)
 
         switch type {
+        case "air_configure": self = .airConfigure(try AirConfiguration(from: decoder))
+        case "air_state": self = .airState(mask: try container.decode(Int.self, forKey: .mask), enabled: try container.decode(Bool.self, forKey: .enabled))
         case "get_camera_state": self = .getCameraState
         case "camera_settings": self = .cameraSettings(try CameraControlRequest(from: decoder))
         case "camera_state": self = .cameraState(try CameraControlState(from: decoder))

@@ -16,7 +16,7 @@ struct ContentView: View {
 
     private var showPreview: Bool {
         !showWirelessScanner && cameraAuthorized && scenePhase == .active && !screenDimmer.isDimmed &&
-            (connection.state != .streaming || showStreamingPreview)
+            (connection.airConfiguration.enabled ? showStreamingPreview : connection.state != .streaming || showStreamingPreview)
     }
 
     var body: some View {
@@ -24,7 +24,12 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
             if cameraAuthorized {
                 if showPreview {
-                    CameraPreviewView(session: camera.captureSession).ignoresSafeArea()
+                    CameraPreviewView(session: camera.captureSession, fixedLandscape: connection.airConfiguration.enabled).ignoresSafeArea()
+                    if connection.airConfiguration.enabled, let configuration = camera.configuration {
+                        AirZonesOverlay(configuration: connection.airConfiguration, mask: connection.airMask,
+                                        width: Int(configuration.width), height: Int(configuration.height))
+                            .ignoresSafeArea().allowsHitTesting(false)
+                    }
                 }
                 VStack(spacing: 16) {
                     HStack {
@@ -38,12 +43,19 @@ struct ContentView: View {
                     ScrollView {
                         VStack(spacing: 10) {
                             Text(connection.formatLabel).font(.headline)
+                            if connection.airConfiguration.enabled {
+                                Text("AIR mode · six brightness zones · no video transmission")
+                                    .font(.callout).multilineTextAlignment(.center)
+                                Text("Hold the phone horizontally. Position and recalibrate the zones from the PC.")
+                                    .font(.caption).multilineTextAlignment(.center)
+                                Button("Stop AIR inputs") { connection.stopStreaming() }.buttonStyle(.borderedProminent)
+                            }
                             if connection.state == .streaming {
                                 Text("Diagnostics: Files › On My iPhone › CamoRip › CamoRip.log")
                                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                             }
                             Text(hint).font(.callout).multilineTextAlignment(.center)
-                            Toggle("Show preview while streaming", isOn: $showStreamingPreview)
+                            Toggle("Show preview while streaming or in AIR mode", isOn: $showStreamingPreview)
                                 .font(.callout)
                             Toggle("Dim screen after 15 seconds", isOn: $dimStreamingScreen)
                                 .font(.callout)
@@ -68,13 +80,13 @@ struct ContentView: View {
                                         .frame(minWidth: 100)
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .disabled(connection.activeTransport == nil)
+                                .disabled(connection.activeTransport == nil || connection.airConfiguration.enabled)
 
                                 Button { connection.switchCamera() } label: {
                                     Label("Switch", systemImage: "arrow.triangle.2.circlepath.camera")
                                 }
                                 .buttonStyle(.bordered)
-                                .disabled(!camera.isRunning || camera.availableCameras.count < 2)
+                                .disabled(!camera.isRunning || camera.availableCameras.count < 2 || connection.airConfiguration.enabled)
                             }
                             Button {
                                 connection.stopStreaming()
@@ -120,7 +132,7 @@ struct ContentView: View {
                         Color.black
                         VStack(spacing: 12) {
                             Image(systemName: "video.fill")
-                            Text("Streaming over \(connection.activeTransport?.rawValue ?? "USB")")
+                            Text(connection.airConfiguration.enabled ? "AIR controller active" : "Streaming over \(connection.activeTransport?.rawValue ?? "USB")")
                             Text("Tap to restore controls").font(.caption)
                         }.foregroundStyle(.gray)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -158,6 +170,7 @@ struct ContentView: View {
             updateScreenDimming()
         }
         .onChange(of: dimStreamingScreen) { _ in updateScreenDimming() }
+        .onChange(of: connection.airConfiguration.enabled) { _ in updateScreenDimming() }
         .onChange(of: showStreamingPreview) { value in
             DiagnosticLog.write("Streaming preview enabled=\(value)")
         }
@@ -165,6 +178,7 @@ struct ContentView: View {
     }
 
     private var status: String {
+        if connection.airConfiguration.enabled { return "AIR controller active" }
         switch connection.state {
         case .idle, .discovering: return "Waiting for PC"
         case .connected: return "\(connection.activeTransport?.rawValue ?? "USB") connected"
@@ -187,7 +201,7 @@ struct ContentView: View {
     }
 
     private func updateScreenDimming() {
-        screenDimmer.update(enabled: dimStreamingScreen && connection.state == .streaming && scenePhase == .active)
+        screenDimmer.update(enabled: dimStreamingScreen && (connection.state == .streaming || connection.airConfiguration.enabled) && scenePhase == .active)
     }
 
     @MainActor private func checkPermission() async {
@@ -199,5 +213,27 @@ struct ContentView: View {
         permissionChecked = true
         if granted && !showWirelessScanner { camera.start(); connection.startDiscovery() }
         else { connection.stopStreaming(); camera.stop() }
+    }
+}
+
+private struct AirZonesOverlay: View {
+    let configuration: AirConfiguration
+    let mask: Int
+    let width: Int
+    let height: Int
+
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = min(geometry.size.width / CGFloat(width), geometry.size.height / CGFloat(height))
+            let left = (geometry.size.width - CGFloat(width) * scale) / 2
+            let top = (geometry.size.height - CGFloat(height) * scale) / 2
+            let rectangles = configuration.rectangles(width: width, height: height)
+            ForEach(0..<6, id: \.self) { index in
+                let rectangle = rectangles[index]
+                Rectangle().stroke(mask & (1 << index) == 0 ? Color.white : Color.green, lineWidth: 3)
+                    .frame(width: rectangle.width * scale, height: rectangle.height * scale)
+                    .position(x: left + rectangle.midX * scale, y: top + rectangle.midY * scale)
+            }
+        }
     }
 }

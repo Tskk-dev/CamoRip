@@ -176,6 +176,24 @@ final class StreamingSwitchTests: XCTestCase {
         XCTAssertNotNil(state.ranges["focus"])
     }
 
+    @MainActor func testAirModeUsesRawFramesWithoutVideoEncodingAndStopsOnDisconnect() async throws {
+        let rig = try await connected(transport: .wifi)
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        XCTAssertTrue(rig.phone.airConfiguration.enabled)
+        XCTAssertEqual(rig.phone.state, .connected)
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 0)
+        XCTAssertTrue(rig.pc.frames.isEmpty)
+        XCTAssertTrue(rig.pc.controls.contains { message in
+            if case .airState(let mask, let enabled) = message { return enabled && mask == 0 }
+            return false
+        })
+        rig.pc.disconnect(); await settle()
+        XCTAssertFalse(rig.phone.airConfiguration.enabled)
+    }
+
     @MainActor func testControlRequestsAndAcknowledgementsWorkOnBothTransports() async throws {
         for transport in [ConnectionManager.TransportType.usb, .wifi] {
             let rig = try await connected(transport: transport)

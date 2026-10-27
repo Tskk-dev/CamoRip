@@ -6,6 +6,8 @@ namespace CamoRip.Core;
 /// <summary>Local USB/Wi-Fi handshake and video streaming state for the Windows companion.</summary>
 public sealed class ConnectionManager : IAsyncDisposable
 {
+    public event EventHandler<AirState>? AirStateReceived;
+    public bool SupportsAir { get; private set; }
     public event EventHandler<string>? Failure;
     public event EventHandler<CameraState>? CameraStateReceived;
     public bool SupportsCameraSettings { get; private set; }
@@ -97,6 +99,12 @@ public sealed class ConnectionManager : IAsyncDisposable
     public Task SwitchCameraAsync(string? cameraId, CancellationToken ct = default) =>
         SendAsync(new SwitchCamera { CameraId = cameraId }, ct);
     public Task RequestCameraStateAsync(CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(new GetCameraState(), ct) : Task.CompletedTask;
+    public Task ConfigureAirAsync(AirConfigure settings, CancellationToken ct = default)
+    {
+        if (!settings.IsValid) throw new ArgumentException("Invalid AIR configuration.", nameof(settings));
+        if (!SupportsAir) throw new InvalidOperationException("Install the CamoRip AIR branch iPhone app first.");
+        return SendAsync(settings, ct);
+    }
     public Task SetCameraSettingsAsync(CameraSettings settings, CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(settings, ct) : Task.CompletedTask;
     public Task PingAsync(CancellationToken ct = default)
     {
@@ -128,6 +136,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             Interlocked.Increment(ref _generation);
             _sessionReady = false;
             SupportsCameraSettings = false;
+            SupportsAir = false;
             SupportsBitrateControl = false;
             _configurationPending = false;
             _startAfterConfigure = false;
@@ -163,6 +172,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                 return;
             }
             SupportsCameraSettings = hello.Capabilities.Contains("camera_controls_v1");
+            SupportsAir = hello.Capabilities.Contains("air_zones_v1");
             SupportsBitrateControl = hello.Capabilities.Contains("bitrate_control_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
@@ -176,6 +186,9 @@ public sealed class ConnectionManager : IAsyncDisposable
         if (ActiveTransport == TransportType.None) return;
         switch (message)
         {
+            case AirState air when air.Mask is >= 0 and <= 63:
+                AirStateReceived?.Invoke(this, air);
+                break;
             case CameraState cameraState:
                 CameraStateReceived?.Invoke(this, cameraState);
                 break;

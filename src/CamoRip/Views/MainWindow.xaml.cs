@@ -4,11 +4,45 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using CamoRip.Core.Protocol;
 using CamoRip.Core.Transport;
 using CamoRip.Core.Video;
+using CamoRip.Core.Air;
 
 namespace CamoRip.Views;
 
 public sealed partial class MainWindow : Window
 {
+    private readonly AirInputBridge airBridge = new();
+    private volatile bool airRequested;
+
+    private async void OnAirEnabled(object sender, RoutedEventArgs e)
+    {
+        if (!_ready || _updating) return;
+        airRequested = AirEnabled.IsOn;
+        if (!airRequested) airBridge.SetEnabled(false);
+        await ApplyAir();
+        Refresh();
+    }
+
+    private async void OnAirCalibrate(object sender, RoutedEventArgs e) => await ApplyAir();
+
+    private async Task ApplyAir()
+    {
+        try
+        {
+            await _service.Connection.ConfigureAirAsync(new AirConfigure {
+                Enabled = airRequested, Threshold = AirThreshold.Value,
+                X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value });
+            AirStatus.Text = airRequested ? "Calibrating: keep hands out of all six zones." : "AIR off";
+        }
+        catch (Exception ex)
+        {
+            airRequested = false;
+            airBridge.SetEnabled(false);
+            _updating = true;
+            AirEnabled.IsOn = false;
+            _updating = false;
+            AirStatus.Text = ex.Message;
+        }
+    }
     private bool _pairingOpen;
     private async void OnWirelessPairing(object sender, RoutedEventArgs e)
     {
@@ -131,10 +165,25 @@ public sealed partial class MainWindow : Window
         };
         _service.Connection.Failure += (_, message) => App.Ui(() => { ConnectionNotice.Message = message; ConnectionNotice.IsOpen = true; });
         _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
+        airBridge.StatusChanged += (_, status) => App.Ui(() => AirStatus.Text = status);
+        _service.Connection.AirStateReceived += (_, state) =>
+        {
+            airBridge.SetEnabled(airRequested && state.Enabled);
+            if (airRequested && state.Enabled) airBridge.Update(state.Mask);
+        };
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
             _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
             if (state == TransportState.Connected) ConnectionNotice.IsOpen = false;
+            else
+            {
+                airRequested = false;
+                airBridge.SetEnabled(false);
+                _updating = true;
+                AirEnabled.IsOn = false;
+                _updating = false;
+                AirStatus.Text = "Disconnected; AIR zones released.";
+            }
             ControlStatus.Text = state == TransportState.Connected && !_service.Connection.SupportsCameraSettings
                 ? "Update the iPhone app to use camera controls." : "Waiting for phone camera capabilities";
         });
@@ -196,7 +245,9 @@ public sealed partial class MainWindow : Window
     {
         foreach (var (key, value) in _service.Status)
             if (Root.FindName(key) is TextBlock text) text.Text = value;
-        StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected && !_service.ChangingMode;
+        StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected && !_service.ChangingMode && !airRequested;
+        AirEnabled.IsEnabled = _service.Connected && _service.Connection.SupportsAir && !_service.ChangingMode;
+        AirCalibrate.IsEnabled = AirEnabled.IsEnabled && airRequested;
         StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
         if (_service.Streaming) ConnectionNotice.IsOpen = false;
         if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }
@@ -279,7 +330,7 @@ public sealed partial class MainWindow : Window
             else Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering;
         }
         Preview.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        if (!visible) { Waiting.Text = _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for video"; Waiting.Visibility = Visibility.Visible; }
+        if (!visible) { Waiting.Text = airRequested ? "AIR mode · phone sends zone inputs without video" : _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for video"; Waiting.Visibility = Visibility.Visible; }
     }
     internal void HideToTray() { _hidden = true; UpdatePreviewVisibility(); AppWindow.Hide(); }
     internal void ShowFromTray()
@@ -289,7 +340,7 @@ public sealed partial class MainWindow : Window
         Activate(); UpdatePreviewVisibility();
     }
     private void OnRendering(object? sender, object e) => _service.RenderLatestPreview();
-    internal void PrepareExit() { _exiting = true; _rendering = false; Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
+    internal void PrepareExit() { airRequested = false; airBridge.Dispose(); _exiting = true; _rendering = false; Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering; _commands.Stop(); _service.PreviewVisible = false; _service.PreviewFrame = null; _gpu?.Dispose(); }
     private void OnPaneToggle(object sender, RoutedEventArgs e) => Navigation.IsPaneOpen = !Navigation.IsPaneOpen;
     private void OnNavigation(object sender, SelectionChangedEventArgs args)
     {
@@ -299,6 +350,7 @@ public sealed partial class MainWindow : Window
         AdjustmentsPage.Visibility = selected == "adjustments" ? Visibility.Visible : Visibility.Collapsed;
         PreviewPage.Visibility = selected == "preview" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = selected == "settings" ? Visibility.Visible : Visibility.Collapsed;
+        AirPage.Visibility = selected == "air" ? Visibility.Visible : Visibility.Collapsed;
     }
     private async Task Invoke(Func<Task> action)
     { try { await action(); } catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); } }

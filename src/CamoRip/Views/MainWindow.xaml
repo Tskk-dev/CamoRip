@@ -17,6 +17,7 @@
       <ListViewItem Tag="adjustments"><StackPanel Orientation="Horizontal" Spacing="12"><SymbolIcon Symbol="Edit" /><TextBlock Text="Camera adjustments" /></StackPanel></ListViewItem>
       <ListViewItem Tag="preview"><StackPanel Orientation="Horizontal" Spacing="12"><SymbolIcon Symbol="View" /><TextBlock Text="Preview" /></StackPanel></ListViewItem>
       <ListViewItem Tag="settings"><StackPanel Orientation="Horizontal" Spacing="12"><SymbolIcon Symbol="Setting" /><TextBlock Text="Settings" /></StackPanel></ListViewItem>
+      <ListViewItem Tag="air"><TextBlock Text="Chunithm AIR" /></ListViewItem>
      </ListView>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel Margin="20,16,20,24" Spacing="16">
@@ -63,6 +64,18 @@
        <ToggleSwitch x:Name="MirrorPreview" Header="Mirror preview" Toggled="OnPreviewOptions" />
        <Button Content="Fullscreen preview" Click="OnFullscreen" HorizontalAlignment="Stretch" />
        <TextBlock Text="Preview settings only affect this window. Webcam output continues when the preview is hidden." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+      </StackPanel>
+      <StackPanel x:Name="AirPage" Spacing="16" Visibility="Collapsed">
+       <TextBlock Text="Chunithm AIR" Style="{ThemeResource SubtitleTextBlockStyle}" />
+       <TextBlock Text="Aim the iPhone at a plain background. Position your six zones, clear your hands, then calibrate. AIR mode sends inputs without encoding video." TextWrapping="Wrap" />
+       <ToggleSwitch x:Name="AirEnabled" Header="Send AIR inputs to Brokenithm" Toggled="OnAirEnabled" IsEnabled="False" />
+       <NumberBox x:Name="AirThreshold" Header="Brightness threshold" Value="12" Minimum="1" Maximum="100" />
+       <NumberBox x:Name="AirX" Header="Zone column (0 left, 1 right)" Value="0.5" Minimum="0" Maximum="1" SmallChange="0.05" />
+       <NumberBox x:Name="AirY" Header="Zone group center (0 top, 1 bottom)" Value="0.5" Minimum="0" Maximum="1" SmallChange="0.05" />
+       <NumberBox x:Name="AirSpan" Header="Zone group height" Value="0.65" Minimum="0.1" Maximum="0.9" SmallChange="0.05" />
+       <Button x:Name="AirCalibrate" Content="Apply and recalibrate empty background" Click="OnAirCalibrate" IsEnabled="False" HorizontalAlignment="Stretch" />
+       <TextBlock x:Name="AirStatus" Text="Install the AIR branch phone app, then connect over USB or Wi-Fi." TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+       <TextBlock Text="Requires the Brokenithm input DLL and its Local\BROKENITHM_SHARED_BUFFER mapping. Input stops after 500 ms without a phone update. Turn AIR off to use the webcam again." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
       </StackPanel>
       <StackPanel x:Name="SettingsPage" Spacing="16" Visibility="Collapsed">
        <TextBlock Text="Settings" Style="{ThemeResource SubtitleTextBlockStyle}" />
