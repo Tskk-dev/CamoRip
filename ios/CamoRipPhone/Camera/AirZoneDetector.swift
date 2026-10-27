@@ -59,16 +59,21 @@ final class AirZoneDetector {
     func processLuma(_ bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int, now: Double) -> Update? {
         lock.lock(); defer { lock.unlock() }
         guard configuration.enabled, width >= 2, height >= 2, stride >= width else { return nil }
-        let means = configuration.rectangles(width: width, height: height).map { rectangle -> Double in
+        var means: [Double] = []
+        for rectangle in configuration.rectangles(width: width, height: height) {
             var total = 0
+            let top = Double(rectangle.minY)
+            let left = Double(rectangle.minX)
+            let stepY = Double(rectangle.height) / 8.0
+            let stepX = Double(rectangle.width) / 8.0
             for row in 0..<8 {
-                let y = min(height - 1, Int(Double(rectangle.minY) + (Double(row) + 0.5) * Double(rectangle.height) / 8))
+                let y = min(height - 1, Int(top + (Double(row) + 0.5) * stepY))
                 for column in 0..<8 {
-                    let x = min(width - 1, Int(Double(rectangle.minX) + (Double(column) + 0.5) * Double(rectangle.width) / 8))
+                    let x = min(width - 1, Int(left + (Double(column) + 0.5) * stepX))
                     total += Int(bytes[y * stride + x])
                 }
             }
-            return Double(total) / 64
+            means.append(Double(total) / 64.0)
         }
         let size = CGSize(width: CGFloat(width), height: CGFloat(height))
         let previous = mask
