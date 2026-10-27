@@ -33,6 +33,8 @@ public abstract record ControlMessage
         var type = doc.RootElement.GetProperty("type").GetString();
         return type switch
         {
+            "air_configure" => doc.Deserialize<AirConfigure>(_options),
+            "air_state" => doc.Deserialize<AirState>(_options),
             "camera_state"      => doc.Deserialize<CameraState>(_options),
             "camera_settings"   => doc.Deserialize<CameraSettings>(_options),
             "get_camera_state"  => new GetCameraState(),
@@ -180,6 +182,28 @@ public sealed record CameraInfo
 }
 
 public sealed record GetCameraState : ControlMessage { public override string Type => "get_camera_state"; }
+public sealed record AirConfigure : ControlMessage
+{
+    public override string Type => "air_configure";
+    public bool Enabled { get; init; }
+    public bool Preview { get; init; }
+    public bool Recalibrate { get; init; }
+    public double Threshold { get; init; } = 12;
+    public double X { get; init; } = 0.5;
+    public double Y { get; init; } = 0.5;
+    public double Span { get; init; } = 0.65;
+    public double Width { get; init; }
+    [JsonIgnore] public bool IsValid => double.IsFinite(Threshold) && Threshold is >= 1 and <= 100 &&
+        double.IsFinite(X) && X is >= 0 and <= 1 && double.IsFinite(Y) && Y is >= 0 and <= 1 &&
+        double.IsFinite(Span) && Span is >= 0.1 and <= 0.9 && double.IsFinite(Width) && Width is >= 0 and <= 1;
+}
+
+public sealed record AirState : ControlMessage
+{
+    public override string Type => "air_state";
+    public int Mask { get; init; }
+    public bool Enabled { get; init; }
+}
 public sealed record CameraSettings : ControlMessage
 {
     public override string Type => "camera_settings";
