@@ -15,13 +15,14 @@ public static class AirZoneLayout
         double left = (viewWidth - imageWidth * scale) / 2;
         double top = (viewHeight - imageHeight * scale) / 2;
         double side = Math.Max(2, Math.Min(imageWidth, imageHeight) * 0.04);
+        double boxWidth = settings.Width == 0 ? side : Math.Min(imageWidth, Math.Max(2, imageWidth * settings.Width));
         double margin = side / (2 * imageHeight);
         double center = Math.Min(Math.Max(settings.Y, settings.Span / 2 + margin), 1 - settings.Span / 2 - margin);
         return Enumerable.Range(0, 6).Select(zone =>
         {
-            double x = Math.Min(Math.Max(0, imageWidth * settings.X - side / 2), imageWidth - side);
+            double x = Math.Min(Math.Max(0, imageWidth * settings.X - boxWidth / 2), imageWidth - boxWidth);
             double y = Math.Min(Math.Max(0, imageHeight * (center + (zone / 5.0 - 0.5) * settings.Span) - side / 2), imageHeight - side);
-            return (left + x * scale, top + y * scale, side * scale, side * scale);
+            return (left + x * scale, top + y * scale, boxWidth * scale, side * scale);
         }).ToArray();
     }
 }

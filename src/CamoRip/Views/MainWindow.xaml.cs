@@ -74,7 +74,8 @@ public sealed partial class MainWindow : Window
                 Enabled = airRequested, Threshold = AirThreshold.Value,
                 Preview = AirCalibrationPreview.IsOn && _service.Connection.SupportsAirPreview,
                 Recalibrate = recalibrate,
-                X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value } : new AirConfigure();
+                X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value,
+                Width = _service.Connection.SupportsAirZoneWidth ? AirWidth.Value / 100 : 0 } : new AirConfigure();
             if (previewOnly && airRequested)
                 settings = airSettings with { Enabled = true, Preview = settings.Preview, Recalibrate = false };
             await _service.Connection.ConfigureAirAsync(settings);
@@ -317,6 +318,7 @@ public sealed partial class MainWindow : Window
         AirEnabled.IsEnabled = _service.Connected && _service.Connection.SupportsAir && !_service.ChangingMode;
         AirCalibrate.IsEnabled = AirEnabled.IsEnabled && airRequested;
         AirCalibrationPreview.IsEnabled = _service.Connected && _service.Connection.SupportsAirPreview;
+        AirWidth.IsEnabled = _service.Connected && _service.Connection.SupportsAirZoneWidth;
         StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
         if (_service.Streaming) ConnectionNotice.IsOpen = false;
         if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }

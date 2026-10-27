@@ -6,6 +6,29 @@ namespace CamoRip.Tests;
 
 public class AirInputTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0.5)]
+    [InlineData(1)]
+    public void WideZonesStayInsideFrameAndMatchPhoneGeometry(double x)
+    {
+        var settings = new AirConfigure { Width = 0.2, X = x };
+        var rectangles = AirZoneLayout.Rectangles(settings, 1280, 720, 1000, 1000);
+        Assert.All(rectangles, rectangle =>
+        {
+            Assert.Equal(200, rectangle.Width, 6);
+            Assert.Equal(22.5, rectangle.Height, 6);
+            Assert.InRange(rectangle.X, 0, 800);
+        });
+        Assert.Equal(Math.Clamp(1000 * x - 100, 0, 800), rectangles[0].X, 6);
+        settings = settings with { Width = 1 };
+        Assert.All(AirZoneLayout.Rectangles(settings, 1280, 720, 1000, 1000), rectangle =>
+        {
+            Assert.Equal(0, rectangle.X, 6);
+            Assert.Equal(1000, rectangle.Width, 6);
+        });
+    }
+
     [Fact]
     public void CalibrationOverlayMatchesPhoneZonesAndLetterboxesVideo()
     {
@@ -50,12 +73,17 @@ public class AirInputTests
     [Fact]
     public void AirMessagesRoundTripAndValidateSettings()
     {
-        var settings = new AirConfigure { Enabled = true, X = 0.25, Threshold = 20 };
+        var settings = new AirConfigure { Enabled = true, X = 0.25, Threshold = 20, Width = 0.2 };
         var decoded = Assert.IsType<AirConfigure>(ControlMessage.FromJson(settings.ToJsonBytes()));
         Assert.Equal(settings, decoded);
         Assert.True(decoded.IsValid);
         Assert.False((decoded with { X = double.NaN }).IsValid);
         Assert.False((decoded with { Span = 2 }).IsValid);
+        Assert.False((decoded with { Width = double.NaN }).IsValid);
+        Assert.False((decoded with { Width = -0.1 }).IsValid);
+        Assert.False((decoded with { Width = 1.1 }).IsValid);
+        Assert.Equal(0, Assert.IsType<AirConfigure>(ControlMessage.FromJson(
+            System.Text.Encoding.UTF8.GetBytes("{\"type\":\"air_configure\",\"enabled\":true}"))).Width);
         var state = new AirState { Mask = 42, Enabled = true };
         Assert.Equal(state, ControlMessage.FromJson(state.ToJsonBytes()));
     }

@@ -8,9 +8,10 @@ struct AirConfiguration: Codable {
     var x = 0.5
     var y = 0.5
     var span = 0.65
+    var width = 0.0
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case enabled, preview, recalibrate, threshold, x, y, span }
+    private enum CodingKeys: String, CodingKey { case enabled, preview, recalibrate, threshold, x, y, span, width }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
@@ -20,23 +21,25 @@ struct AirConfiguration: Codable {
         x = try values.decodeIfPresent(Double.self, forKey: .x) ?? 0.5
         y = try values.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
         span = try values.decodeIfPresent(Double.self, forKey: .span) ?? 0.65
+        width = try values.decodeIfPresent(Double.self, forKey: .width) ?? 0
     }
 
     var isValid: Bool {
         threshold.isFinite && (1...100).contains(threshold) &&
         x.isFinite && (0...1).contains(x) && y.isFinite && (0...1).contains(y) &&
-        span.isFinite && (0.1...0.9).contains(span)
+        span.isFinite && (0.1...0.9).contains(span) && width.isFinite && (0...1).contains(width)
     }
 
     func rectangles(width: Int, height: Int) -> [CGRect] {
         let side = max(2, Double(min(width, height)) * 0.04)
+        let boxWidth = self.width == 0 ? side : min(Double(width), max(2, Double(width) * self.width))
         let margin = side / (2 * Double(height))
         let center = min(max(y, span / 2 + margin), 1 - span / 2 - margin)
         return (0..<6).map { zone in
             let centerY = Double(height) * (center + (Double(zone) / 5 - 0.5) * span)
-            return CGRect(x: CGFloat(min(max(0, Double(width) * x - side / 2), Double(width) - side)),
+            return CGRect(x: CGFloat(min(max(0, Double(width) * x - boxWidth / 2), Double(width) - boxWidth)),
                           y: CGFloat(min(max(0, centerY - side / 2), Double(height) - side)),
-                          width: CGFloat(side), height: CGFloat(side))
+                          width: CGFloat(boxWidth), height: CGFloat(side))
         }
     }
 }
@@ -58,7 +61,7 @@ final class AirZoneDetector {
         let previous = self.configuration
         let reset = configuration.recalibrate || previous.enabled != configuration.enabled ||
             previous.threshold != configuration.threshold || previous.x != configuration.x ||
-            previous.y != configuration.y || previous.span != configuration.span
+            previous.y != configuration.y || previous.span != configuration.span || previous.width != configuration.width
         self.configuration = configuration
         if reset { baseline = nil; mask = 0 }
         lastSent = -.infinity
@@ -82,19 +85,23 @@ final class AirZoneDetector {
         guard configuration.enabled, width >= 2, height >= 2, stride >= width else { return nil }
         var means: [Double] = []
         for rectangle in configuration.rectangles(width: width, height: height) {
-            var total = 0
             let top = Double(rectangle.minY)
             let left = Double(rectangle.minX)
             let stepY = Double(rectangle.height) / 8.0
-            let stepX = Double(rectangle.width) / 8.0
-            for row in 0..<8 {
-                let y = min(height - 1, Int(top + (Double(row) + 0.5) * stepY))
-                for column in 0..<8 {
-                    let x = min(width - 1, Int(left + (Double(column) + 0.5) * stepX))
-                    total += Int(bytes[y * stride + x])
+            // Local patches keep a hand from disappearing in a wide zone's average.
+            let patches = max(1, Int(ceil(rectangle.width / rectangle.height)))
+            let patchWidth = Double(rectangle.width) / Double(patches)
+            for patch in 0..<patches {
+                var total = 0
+                for row in 0..<8 {
+                    let y = min(height - 1, Int(top + (Double(row) + 0.5) * stepY))
+                    for column in 0..<8 {
+                        let x = min(width - 1, Int(left + (Double(patch) + (Double(column) + 0.5) / 8) * patchWidth))
+                        total += Int(bytes[y * stride + x])
+                    }
                 }
+                means.append(Double(total) / 64.0)
             }
-            means.append(Double(total) / 64.0)
         }
         let size = CGSize(width: CGFloat(width), height: CGFloat(height))
         let previous = mask
@@ -104,10 +111,14 @@ final class AirZoneDetector {
             mask = 0
             lastSent = -.infinity
         } else if let baseline {
+            let patches = means.count / 6
             for zone in 0..<6 {
                 let bit = 1 << zone
                 let threshold = configuration.threshold * (mask & bit == 0 ? 1 : 0.65)
-                if abs(means[zone] - baseline[zone]) >= threshold { mask |= bit }
+                let triggered = (zone * patches..<(zone + 1) * patches).contains {
+                    abs(means[$0] - baseline[$0]) >= threshold
+                }
+                if triggered { mask |= bit }
                 else { mask &= ~bit }
             }
         }

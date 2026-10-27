@@ -75,6 +75,7 @@
        <NumberBox x:Name="AirX" Header="Zone column (0 left, 1 right)" Value="0.5" Minimum="0" Maximum="1" SmallChange="0.05" />
        <NumberBox x:Name="AirY" Header="Zone group center (0 top, 1 bottom)" Value="0.5" Minimum="0" Maximum="1" SmallChange="0.05" />
        <NumberBox x:Name="AirSpan" Header="Zone group height" Value="0.65" Minimum="0.1" Maximum="0.9" SmallChange="0.05" />
+       <NumberBox x:Name="AirWidth" Header="Zone width (% of image)" Value="20" Minimum="1" Maximum="100" SmallChange="5" IsEnabled="False" />
        <Button x:Name="AirCalibrate" Content="Apply and recalibrate empty background" Click="onAirCalibrate" IsEnabled="False" HorizontalAlignment="Stretch" />
        <TextBlock x:Name="AirStatus" Text="Install the AIR branch phone app, then connect over USB or Wi-Fi." TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
        <TextBlock Text="Requires the Brokenithm input DLL and its Local\BROKENITHM_SHARED_BUFFER mapping. Input stops after 500 ms without a phone update. Turn AIR off to use the webcam again." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />

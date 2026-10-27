@@ -1,6 +1,58 @@
 import XCTest
 
 final class AirZoneDetectorTests: XCTestCase {
+    func testWideZonesDetectLocalHandAtEitherEndAndRecalibrateWidthChanges() throws {
+        let detector = AirZoneDetector()
+        var settings = AirConfiguration()
+        settings.enabled = true
+        settings.width = 0.8
+        detector.configure(settings)
+        let width = 1000, height = 600
+        var image = [UInt8](repeating: 100, count: width * height)
+        func process(_ now: Double) -> Int? {
+            image.withUnsafeBufferPointer {
+                detector.processLuma($0.baseAddress!, width: width, height: height, stride: width, now: now)?.mask
+            }
+        }
+        XCTAssertEqual(process(0), 0)
+        let rectangle = settings.rectangles(width: width, height: height)[2]
+        for (index, left) in [Int(rectangle.minX), Int(rectangle.maxX) - 25].enumerated() {
+            for y in Int(rectangle.minY)..<Int(rectangle.maxY) {
+                for x in left..<(left + 25) { image[y * width + x] = 180 }
+            }
+            XCTAssertEqual(process(Double(index) + 0.01), 4)
+            image = [UInt8](repeating: 100, count: image.count)
+            XCTAssertEqual(process(Double(index) + 0.02), 0)
+        }
+        settings.width = 0.2
+        detector.configure(settings)
+        XCTAssertEqual(process(3), 0)
+        let oldSettings = try JSONDecoder().decode(AirConfiguration.self, from: Data("{\"enabled\":true}".utf8))
+        XCTAssertEqual(oldSettings.width, 0)
+        let decoded = try JSONDecoder().decode(AirConfiguration.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.width, 0.2)
+    }
+
+    func testWideZoneGeometryAndValidation() {
+        var settings = AirConfiguration()
+        settings.width = 0.2
+        for x in [0.0, 0.5, 1.0] {
+            settings.x = x
+            for rectangle in settings.rectangles(width: 1280, height: 720) {
+                XCTAssertEqual(rectangle.width, 256, accuracy: 0.000001)
+                XCTAssertEqual(rectangle.height, 28.8, accuracy: 0.000001)
+                XCTAssertEqual(rectangle.minX, CGFloat(min(max(1280 * x - 128, 0), 1024)), accuracy: 0.000001)
+            }
+        }
+        settings.width = 1
+        XCTAssertTrue(settings.isValid)
+        XCTAssertEqual(settings.rectangles(width: 1280, height: 720)[0].width, 1280)
+        for invalid in [-0.1, 1.1, Double.nan, Double.infinity] {
+            settings.width = invalid
+            XCTAssertFalse(settings.isValid)
+        }
+    }
+
     func testAirCaptureRanksFrameRateBeforeResolution() {
         let large = CaptureConfiguration(width: 1280, height: 720, fps: 60)
         let fast = CaptureConfiguration(width: 640, height: 360, fps: 120)

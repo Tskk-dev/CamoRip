@@ -192,9 +192,10 @@ public sealed record AirConfigure : ControlMessage
     public double X { get; init; } = 0.5;
     public double Y { get; init; } = 0.5;
     public double Span { get; init; } = 0.65;
+    public double Width { get; init; }
     [JsonIgnore] public bool IsValid => double.IsFinite(Threshold) && Threshold is >= 1 and <= 100 &&
         double.IsFinite(X) && X is >= 0 and <= 1 && double.IsFinite(Y) && Y is >= 0 and <= 1 &&
-        double.IsFinite(Span) && Span is >= 0.1 and <= 0.9;
+        double.IsFinite(Span) && Span is >= 0.1 and <= 0.9 && double.IsFinite(Width) && Width is >= 0 and <= 1;
 }
 
 public sealed record AirState : ControlMessage
