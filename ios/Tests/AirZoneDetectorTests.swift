@@ -1,6 +1,14 @@
 import XCTest
 
 final class AirZoneDetectorTests: XCTestCase {
+    func testAirCaptureRanksFrameRateBeforeResolution() {
+        let large = CaptureConfiguration(width: 1280, height: 720, fps: 60)
+        let fast = CaptureConfiguration(width: 640, height: 360, fps: 120)
+        XCTAssertTrue(large.ranksBelow(fast, preferFrameRate: true))
+        XCTAssertFalse(large.ranksBelow(fast, preferFrameRate: false))
+        XCTAssertTrue(fast.ranksBelow(.init(width: 1280, height: 720, fps: 120), preferFrameRate: true))
+    }
+
     func testPreviewChangesPreserveBaselineUntilExplicitCalibration() {
         let detector = AirZoneDetector()
         var configuration = AirConfiguration()

@@ -18,6 +18,13 @@ struct CaptureConfiguration: Equatable {
     let height: Int32
     let fps: Int32
     var resolution: String { "\(width)x\(height)" }
+
+    func ranksBelow(_ other: CaptureConfiguration, preferFrameRate: Bool) -> Bool {
+        if preferFrameRate && fps != other.fps { return fps < other.fps }
+        let pixels = Int64(width) * Int64(height)
+        let otherPixels = Int64(other.width) * Int64(other.height)
+        return pixels == otherPixels ? fps < other.fps : pixels < otherPixels
+    }
 }
 
 /// All capture configuration and frame callbacks run on sessionQueue. UI updates
@@ -198,7 +205,9 @@ final class CameraSession: NSObject, ObservableObject {
         guard let (format, actualFPS) = candidates.max(by: { lhs, rhs in
             let a = CMVideoFormatDescriptionGetDimensions(lhs.0.formatDescription)
             let b = CMVideoFormatDescriptionGetDimensions(rhs.0.formatDescription)
-            return a.width * a.height == b.width * b.height ? lhs.1 < rhs.1 : a.width * a.height < b.width * b.height
+            return CaptureConfiguration(width: a.width, height: a.height, fps: lhs.1).ranksBelow(
+                CaptureConfiguration(width: b.width, height: b.height, fps: rhs.1),
+                preferFrameRate: requestedFPS > 60)
         }) else { throw failure("This camera does not support a 16:9 format at up to \(requestedFPS) fps.") }
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }

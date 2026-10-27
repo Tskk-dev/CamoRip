@@ -70,7 +70,7 @@
        <TextBlock Text="Aim the iPhone at a plain background. Position your six zones, clear your hands, then calibrate. AIR mode sends inputs without encoding video." TextWrapping="Wrap" />
        <ToggleSwitch x:Name="AirEnabled" Header="Send AIR inputs to Brokenithm" Toggled="onAirEnabled" IsEnabled="False" />
        <ToggleSwitch x:Name="AirCalibrationPreview" Header="Live calibration preview on PC" IsOn="True" Toggled="onAirPreview" />
-       <TextBlock Text="The overlay turns green when a zone triggers. Calibration uses the original, unmirrored frame. Clear your hands before recalibrating. Turn preview off for gameplay to stop video encoding." TextWrapping="Wrap" />
+       <TextBlock Text="Green zones detect your hand. Turn preview off for gameplay: AIR requests up to 720p240, depending on your camera. Keep hands clear while changing preview; the background recalibrates when capture changes." TextWrapping="Wrap" />
        <NumberBox x:Name="AirThreshold" Header="Brightness threshold" Value="12" Minimum="1" Maximum="100" />
        <NumberBox x:Name="AirX" Header="Zone column (0 left, 1 right)" Value="0.5" Minimum="0" Maximum="1" SmallChange="0.05" />
        <NumberBox x:Name="AirY" Header="Zone group center (0 top, 1 bottom)" Value="0.5" Minimum="0" Maximum="1" SmallChange="0.05" />

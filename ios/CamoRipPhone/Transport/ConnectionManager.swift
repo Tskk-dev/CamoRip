@@ -17,6 +17,9 @@ final class ConnectionManager: ObservableObject {
     @Published private(set) var airConfiguration = AirConfiguration()
     @Published private(set) var airMask = 0
     private let airDetector = AirZoneDetector()
+    private var airVideoConfiguration: CaptureConfiguration?
+    private var airCapturePending = false
+    private var airCaptureRevision = 0
     @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
     weak var cameraSession: PhoneCapture?
 
@@ -118,7 +121,7 @@ final class ConnectionManager: ObservableObject {
             fail(code: "camera_denied", message: "Enable Camera permission in iPhone Settings."); return
         }
         wantsStreaming = true
-        if configuring || !negotiated {
+        if configuring || airCapturePending || !negotiated {
             startRequested = true
             pendingStartNotifiesPeer = pendingStartNotifiesPeer || notifyPeer
             return
@@ -271,11 +274,10 @@ final class ConnectionManager: ObservableObject {
                 guard activeTransport != nil, applicationIsActive(), cameraIsAuthorized() else {
                     fail(code: "camera_unavailable", message: "Open the app and allow Camera access before starting AIR."); return
                 }
-                if settings.preview && (!negotiated || configuring) {
+                if !negotiated || configuring {
                     fail(code: "air_preview_not_ready", message: "Wait for the camera configuration before enabling calibration preview."); return
                 }
                 if !airConfiguration.enabled { stopStreaming() }
-                cameraSession?.start()
             }
             configureAir(settings)
         case .welcome:
@@ -374,16 +376,55 @@ final class ConnectionManager: ObservableObject {
     private func configureAir(_ settings: AirConfiguration) {
         let wasPreviewing = airConfiguration.enabled && airConfiguration.preview
         let previewing = settings.enabled && settings.preview
+        let wasHighRate = airConfiguration.enabled && !airConfiguration.preview
+        let highRate = settings.enabled && !settings.preview
+        let changeCapture = wasHighRate != highRate || airCapturePending
+        airCaptureRevision += 1
+        let revision = airCaptureRevision
         airConfiguration = settings
-        airMask = airDetector.configure(settings)
-        streamingLock.lock(); streamingForCapture = previewing; streamingLock.unlock()
-        if previewing { encoder.requestKeyframe() }
-        else if wasPreviewing { encoder.flush() }
+        airMask = airDetector.configure(changeCapture ? AirConfiguration() : settings)
+        streamingLock.lock(); streamingForCapture = previewing && !changeCapture; streamingLock.unlock()
+        if wasPreviewing && (!previewing || changeCapture) { encoder.flush() }
         setIdleTimerDisabled(settings.enabled)
         if activeTransport != nil {
-            state = previewing ? .streaming : .connected
-            transport.sendControl(previewing ? .startStream : .stopStream)
+            state = previewing && !changeCapture ? .streaming : .connected
+            transport.sendControl(previewing && !changeCapture ? .startStream : .stopStream)
             transport.sendControl(.airState(mask: airMask, enabled: settings.enabled))
+        }
+        guard changeCapture, let camera = cameraSession else {
+            if previewing { encoder.requestKeyframe() }
+            if settings.enabled { cameraSession?.start() }
+            return
+        }
+        if highRate && airVideoConfiguration == nil { airVideoConfiguration = camera.configuration }
+        guard let video = airVideoConfiguration else { return }
+        let target = highRate ? CaptureConfiguration(width: 1280, height: 720, fps: 240) : video
+        airCapturePending = true
+        camera.configure(width: target.width, height: target.height, fps: target.fps) { [weak self] result in
+            guard let self, revision == self.airCaptureRevision else { return }
+            self.airCapturePending = false
+            if !highRate { self.airVideoConfiguration = nil }
+            switch result {
+            case .success(let actual):
+                self.airMask = self.airDetector.configure(settings)
+                self.formatLabel = "\(actual.width) × \(actual.height) · \(actual.fps) fps"
+                DiagnosticLog.write("AIR capture: \(actual.resolution) @ \(actual.fps) fps; preview=\(previewing)")
+                if settings.enabled && self.activeTransport != nil {
+                    camera.start()
+                    self.streamingLock.lock(); self.streamingForCapture = previewing; self.streamingLock.unlock()
+                    if previewing {
+                        self.encoder.requestKeyframe()
+                        self.state = .streaming
+                        self.transport.sendControl(.startStream)
+                    }
+                    self.startMetricsLogging()
+                } else if self.wantsStreaming {
+                    self.startRequested = false
+                    self.startStreaming()
+                }
+            case .failure(let error):
+                self.fail(code: "air_capture_failed", message: error.localizedDescription)
+            }
         }
     }
 

@@ -73,6 +73,11 @@ final class StreamingSwitchTests: XCTestCase {
         var holdControls = false
         var controlReplies: [() -> Void] = []
         var appliedControls: [(CameraControlRequest, Bool)] = []
+        var configurations: [CaptureConfiguration] = []
+        var holdConfiguration = false
+        var configurationReplies: [() -> Void] = []
+        var maximumFPS: Int32 = 240
+        var failConfiguration = false
         var availableCameras: [CameraInfo] {
             ["rear", "front"].map { .init(id: $0, name: $0, position: $0,
                                          type: "wide_angle", zoomFactor: 1) }
@@ -83,8 +88,15 @@ final class StreamingSwitchTests: XCTestCase {
         func turnTorchOff() { trace.events.append("torchOff") }
         func configure(width: Int32, height: Int32, fps: Int32,
                        completion: @escaping (Result<CaptureConfiguration, Error>) -> Void) {
-            configuration = .init(width: width, height: height, fps: fps)
-            completion(.success(configuration!))
+            configurations.append(.init(width: width, height: height, fps: fps))
+            let finish: () -> Void = {
+                if self.failConfiguration {
+                    completion(.failure(NSError(domain: "test", code: 1))); return
+                }
+                self.configuration = .init(width: width, height: height, fps: min(fps, self.maximumFPS))
+                completion(.success(self.configuration!))
+            }
+            if holdConfiguration { configurationReplies.append(finish) } else { finish() }
         }
         func switchCamera(completion: ((CameraInfo?) -> Void)?) {
             switchToCamera(withID: currentCameraID == "rear" ? "front" : "rear", completion: completion)
@@ -211,6 +223,117 @@ final class StreamingSwitchTests: XCTestCase {
         XCTAssertEqual(rig.encoder.encoded, 1)
         XCTAssertTrue(rig.phone.airConfiguration.enabled)
         XCTAssertEqual(rig.phone.state, .connected)
+    }
+
+    @MainActor func testAirRequests240FPSAndRestoresVideoModeBeforeEncoding() async throws {
+        let rig = try await connected()
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1280, height: 720, fps: 240))
+        XCTAssertTrue(rig.phone.formatLabel.contains("240 fps"))
+        settings.preview = true
+        rig.camera.holdConfiguration = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 0)
+        XCTAssertEqual(rig.phone.state, .connected)
+        rig.camera.configurationReplies.removeFirst()()
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1920, height: 1080, fps: 60))
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 1)
+        XCTAssertEqual(rig.phone.state, .streaming)
+        XCTAssertFalse(rig.trace.events.contains("prepare:1280x720@240"))
+    }
+
+    @MainActor func testAirFallsBackAndRestoresOnStop() async throws {
+        let rig = try await connected()
+        rig.camera.maximumFPS = 120
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        XCTAssertEqual(rig.camera.configuration?.fps, 120)
+        XCTAssertTrue(rig.phone.formatLabel.contains("120 fps"))
+        rig.phone.stopStreaming()
+        XCTAssertFalse(rig.phone.airConfiguration.enabled)
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1920, height: 1080, fps: 60))
+        rig.phone.startStreaming()
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 1)
+    }
+
+    @MainActor func testDisconnectDuringAirConfigurationCannotRestartCapture() async throws {
+        let rig = try await connected()
+        rig.camera.holdConfiguration = true
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        rig.pc.disconnect(); await settle()
+        rig.trace.events.removeAll()
+        let replies = rig.camera.configurationReplies
+        for reply in replies { reply() }
+        XCTAssertFalse(rig.phone.airConfiguration.enabled)
+        XCTAssertFalse(rig.trace.events.contains("start"))
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1920, height: 1080, fps: 60))
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 0)
+    }
+
+    @MainActor func testAirCaptureFailureDisablesInputsWithoutEncoding() async throws {
+        let rig = try await connected()
+        rig.camera.failConfiguration = true
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        XCTAssertFalse(rig.phone.airConfiguration.enabled)
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 0)
+        XCTAssertTrue(rig.pc.controls.contains { message in
+            if case .error(let code, _) = message { return code == "air_capture_failed" }
+            return false
+        })
+    }
+
+    @MainActor func testRapidAirPreviewChangesOnlyResumeLatestCapture() async throws {
+        let rig = try await connected()
+        rig.camera.holdConfiguration = true
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        settings.preview = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        settings.preview = false
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        rig.trace.events.removeAll()
+        let replies = rig.camera.configurationReplies
+        XCTAssertEqual(replies.count, 3)
+        replies[0](); replies[1]()
+        XCTAssertFalse(rig.trace.events.contains("start"))
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 0)
+        replies[2]()
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1280, height: 720, fps: 240))
+        XCTAssertEqual(rig.trace.events.filter { $0 == "start" }.count, 1)
+        rig.camera.holdConfiguration = false
+        rig.phone.stopStreaming()
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1920, height: 1080, fps: 60))
+    }
+
+    @MainActor func testWebcamStartWaitsForAirCaptureRestoration() async throws {
+        let rig = try await connected()
+        var settings = AirConfiguration()
+        settings.enabled = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        rig.camera.holdConfiguration = true
+        rig.phone.stopStreaming()
+        rig.phone.startStreaming()
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 0)
+        rig.camera.configurationReplies.removeFirst()()
+        XCTAssertEqual(rig.phone.state, .streaming)
+        XCTAssertEqual(rig.camera.configuration, .init(width: 1920, height: 1080, fps: 60))
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 1)
     }
 
     @MainActor func testControlRequestsAndAcknowledgementsWorkOnBothTransports() async throws {
