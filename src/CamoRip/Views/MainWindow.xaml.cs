@@ -13,18 +13,18 @@ public sealed partial class MainWindow : Window
     private readonly AirInputBridge airBridge = new();
     private volatile bool airRequested;
 
-    private async void OnAirEnabled(object sender, RoutedEventArgs e)
+    private async void onAirEnabled(object sender, RoutedEventArgs e)
     {
         if (!_ready || _updating) return;
         airRequested = AirEnabled.IsOn;
         if (!airRequested) airBridge.SetEnabled(false);
-        await ApplyAir();
+        await applyAir();
         Refresh();
     }
 
-    private async void OnAirCalibrate(object sender, RoutedEventArgs e) => await ApplyAir();
+    private async void onAirCalibrate(object sender, RoutedEventArgs e) => await applyAir();
 
-    private async Task ApplyAir()
+    private async Task applyAir()
     {
         try
         {

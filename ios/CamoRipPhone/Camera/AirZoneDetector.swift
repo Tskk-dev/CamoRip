@@ -15,8 +15,10 @@ struct AirConfiguration: Codable {
 
     func rectangles(width: Int, height: Int) -> [CGRect] {
         let side = max(2, Double(min(width, height)) * 0.04)
+        let margin = side / (2 * Double(height))
+        let center = min(max(y, span / 2 + margin), 1 - span / 2 - margin)
         return (0..<6).map { zone in
-            let centerY = Double(height) * (y + (Double(zone) / 5 - 0.5) * span)
+            let centerY = Double(height) * (center + (Double(zone) / 5 - 0.5) * span)
             return CGRect(x: CGFloat(min(max(0, Double(width) * x - side / 2), Double(width) - side)),
                           y: CGFloat(min(max(0, centerY - side / 2), Double(height) - side)),
                           width: CGFloat(side), height: CGFloat(side))

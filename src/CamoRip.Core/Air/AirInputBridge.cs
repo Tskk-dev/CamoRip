@@ -18,7 +18,7 @@ public sealed class AirInputBridge : IDisposable
     public AirInputBridge(string mappingName = @"Local\BROKENITHM_SHARED_BUFFER")
     {
         this.mappingName = mappingName;
-        timer = new Timer(_ => Tick(), null, 100, 100);
+        timer = new Timer(_ => tick(), null, 100, 100);
     }
 
     public void SetEnabled(bool value)
@@ -30,8 +30,8 @@ public sealed class AirInputBridge : IDisposable
             enabled = value;
             mask = 0;
             updated = 0;
-            Write(0);
-            if (!value) Close();
+            write(0);
+            if (!value) close();
         }
     }
 
@@ -43,7 +43,7 @@ public sealed class AirInputBridge : IDisposable
             if (!enabled || disposed) return;
             mask = value;
             updated = Environment.TickCount64;
-            Write(mask);
+            write(mask);
         }
     }
 
@@ -58,16 +58,16 @@ public sealed class AirInputBridge : IDisposable
         return bytes;
     }
 
-    private void Tick()
+    private void tick()
     {
         lock (sync)
         {
             if (enabled && !disposed)
-                Write(updated == 0 ? 0 : SafeMask(mask, Environment.TickCount64 - updated));
+                write(updated == 0 ? 0 : SafeMask(mask, Environment.TickCount64 - updated));
         }
     }
 
-    private void Write(int value)
+    private void write(int value)
     {
         try
         {
@@ -85,12 +85,12 @@ public sealed class AirInputBridge : IDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            Close();
+            close();
             StatusChanged?.Invoke(this, "Waiting for Brokenithm shared buffer. Start the game and its input DLL.");
         }
     }
 
-    private void Close() { view?.Dispose(); view = null; mapping?.Dispose(); mapping = null; }
+    private void close() { view?.Dispose(); view = null; mapping?.Dispose(); mapping = null; }
 
     public void Dispose()
     {
@@ -98,8 +98,8 @@ public sealed class AirInputBridge : IDisposable
         {
             if (disposed) return;
             enabled = false;
-            Write(0);
-            Close();
+            write(0);
+            close();
             disposed = true;
         }
         timer.Dispose();
