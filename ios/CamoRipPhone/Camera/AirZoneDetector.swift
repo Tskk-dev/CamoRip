@@ -2,10 +2,25 @@ import AVFoundation
 
 struct AirConfiguration: Codable {
     var enabled = false
+    var preview = false
+    var recalibrate = false
     var threshold = 12.0
     var x = 0.5
     var y = 0.5
     var span = 0.65
+
+    init() {}
+    private enum CodingKeys: String, CodingKey { case enabled, preview, recalibrate, threshold, x, y, span }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        preview = try values.decodeIfPresent(Bool.self, forKey: .preview) ?? false
+        recalibrate = try values.decodeIfPresent(Bool.self, forKey: .recalibrate) ?? false
+        threshold = try values.decodeIfPresent(Double.self, forKey: .threshold) ?? 12
+        x = try values.decodeIfPresent(Double.self, forKey: .x) ?? 0.5
+        y = try values.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
+        span = try values.decodeIfPresent(Double.self, forKey: .span) ?? 0.65
+    }
 
     var isValid: Bool {
         threshold.isFinite && (1...100).contains(threshold) &&
@@ -38,13 +53,17 @@ final class AirZoneDetector {
     var generation: Int { lock.lock(); defer { lock.unlock() }; return revision }
     var enabled: Bool { lock.lock(); defer { lock.unlock() }; return configuration.enabled }
 
-    func configure(_ configuration: AirConfiguration) {
+    @discardableResult func configure(_ configuration: AirConfiguration) -> Int {
         lock.lock(); defer { lock.unlock() }
+        let previous = self.configuration
+        let reset = configuration.recalibrate || previous.enabled != configuration.enabled ||
+            previous.threshold != configuration.threshold || previous.x != configuration.x ||
+            previous.y != configuration.y || previous.span != configuration.span
         self.configuration = configuration
-        baseline = nil
-        mask = 0
+        if reset { baseline = nil; mask = 0 }
         lastSent = -.infinity
         revision += 1
+        return mask
     }
 
     func process(_ sample: CMSampleBuffer) -> Update? {

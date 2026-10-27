@@ -186,6 +186,8 @@ public sealed record AirConfigure : ControlMessage
 {
     public override string Type => "air_configure";
     public bool Enabled { get; init; }
+    public bool Preview { get; init; }
+    public bool Recalibrate { get; init; }
     public double Threshold { get; init; } = 12;
     public double X { get; init; } = 0.5;
     public double Y { get; init; } = 0.5;

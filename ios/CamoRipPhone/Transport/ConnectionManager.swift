@@ -105,7 +105,10 @@ final class ConnectionManager: ObservableObject {
     /// Called by the phone's Start button or a Windows start_stream request.
     /// The callback waits for capture configuration before enabling frame delivery.
     func startStreaming(notifyPeer: Bool = true) {
-        if airConfiguration.enabled { transport.sendControl(.stopStream); return }
+        if airConfiguration.enabled {
+            transport.sendControl(airConfiguration.preview ? .startStream : .stopStream)
+            return
+        }
         guard activeTransport != nil else { return }
         guard applicationIsActive() else {
             fail(code: "app_in_background", message: "Open CamoRip on the iPhone to start video.")
@@ -162,7 +165,6 @@ final class ConnectionManager: ObservableObject {
                     self.transport.sendControl(.airState(mask: update.mask, enabled: true))
                 }
             }
-            return
         }
         streamingLock.lock()
         defer { streamingLock.unlock() }
@@ -269,12 +271,15 @@ final class ConnectionManager: ObservableObject {
                 guard activeTransport != nil, applicationIsActive(), cameraIsAuthorized() else {
                     fail(code: "camera_unavailable", message: "Open the app and allow Camera access before starting AIR."); return
                 }
-                stopStreaming()
+                if settings.preview && (!negotiated || configuring) {
+                    fail(code: "air_preview_not_ready", message: "Wait for the camera configuration before enabling calibration preview."); return
+                }
+                if !airConfiguration.enabled { stopStreaming() }
                 cameraSession?.start()
             }
             configureAir(settings)
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "air_zones_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "air_zones_v1", "air_preview_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
@@ -367,11 +372,19 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func configureAir(_ settings: AirConfiguration) {
+        let wasPreviewing = airConfiguration.enabled && airConfiguration.preview
+        let previewing = settings.enabled && settings.preview
         airConfiguration = settings
-        airDetector.configure(settings)
-        airMask = 0
+        airMask = airDetector.configure(settings)
+        streamingLock.lock(); streamingForCapture = previewing; streamingLock.unlock()
+        if previewing { encoder.requestKeyframe() }
+        else if wasPreviewing { encoder.flush() }
         setIdleTimerDisabled(settings.enabled)
-        if activeTransport != nil { transport.sendControl(.airState(mask: 0, enabled: settings.enabled)) }
+        if activeTransport != nil {
+            state = previewing ? .streaming : .connected
+            transport.sendControl(previewing ? .startStream : .stopStream)
+            transport.sendControl(.airState(mask: airMask, enabled: settings.enabled))
+        }
     }
 
     private func startMetricsLogging() {

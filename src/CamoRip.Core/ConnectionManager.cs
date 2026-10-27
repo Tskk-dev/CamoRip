@@ -8,6 +8,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 {
     public event EventHandler<AirState>? AirStateReceived;
     public bool SupportsAir { get; private set; }
+    public bool SupportsAirPreview { get; private set; }
     public event EventHandler<string>? Failure;
     public event EventHandler<CameraState>? CameraStateReceived;
     public bool SupportsCameraSettings { get; private set; }
@@ -103,6 +104,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     {
         if (!settings.IsValid) throw new ArgumentException("Invalid AIR configuration.", nameof(settings));
         if (!SupportsAir) throw new InvalidOperationException("Install the CamoRip AIR branch iPhone app first.");
+        if (settings.Preview && !SupportsAirPreview) throw new InvalidOperationException("Update the iPhone AIR app to use PC calibration preview.");
         return SendAsync(settings, ct);
     }
     public Task SetCameraSettingsAsync(CameraSettings settings, CancellationToken ct = default) => SupportsCameraSettings ? SendAsync(settings, ct) : Task.CompletedTask;
@@ -137,6 +139,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             _sessionReady = false;
             SupportsCameraSettings = false;
             SupportsAir = false;
+            SupportsAirPreview = false;
             SupportsBitrateControl = false;
             _configurationPending = false;
             _startAfterConfigure = false;
@@ -173,6 +176,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             }
             SupportsCameraSettings = hello.Capabilities.Contains("camera_controls_v1");
             SupportsAir = hello.Capabilities.Contains("air_zones_v1");
+            SupportsAirPreview = hello.Capabilities.Contains("air_preview_v1");
             SupportsBitrateControl = hello.Capabilities.Contains("bitrate_control_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;

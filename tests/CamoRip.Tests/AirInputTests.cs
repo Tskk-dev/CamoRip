@@ -7,6 +7,24 @@ namespace CamoRip.Tests;
 public class AirInputTests
 {
     [Fact]
+    public void CalibrationOverlayMatchesPhoneZonesAndLetterboxesVideo()
+    {
+        var settings = new AirConfigure();
+        var rectangles = AirZoneLayout.Rectangles(settings, 1280, 720, 1000, 1000);
+        Assert.Equal(6, rectangles.Length);
+        Assert.Equal(488.75, rectangles[0].X, 6);
+        Assert.Equal(305.9375, rectangles[0].Y, 6);
+        Assert.Equal(22.5, rectangles[0].Width, 6);
+        Assert.Equal(22.5, rectangles[0].Height, 6);
+        Assert.True(rectangles[5].Y > rectangles[0].Y);
+        Assert.Empty(AirZoneLayout.Rectangles(settings, 1280, 720, 0, 1000));
+        foreach (var rectangle in AirZoneLayout.Rectangles(settings with { X = 1, Y = 1 }, 640, 480, 800, 600))
+        {
+            Assert.InRange(rectangle.X, 0, 800 - rectangle.Width);
+            Assert.InRange(rectangle.Y, 0, 600 - rectangle.Height + 0.000001);
+        }
+    }
+    [Fact]
     public void SixZonesMapToBrokenithmBeamOrder()
     {
         int[] positions = [4, 5, 2, 3, 0, 1];

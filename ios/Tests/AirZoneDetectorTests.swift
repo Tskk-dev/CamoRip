@@ -1,6 +1,27 @@
 import XCTest
 
 final class AirZoneDetectorTests: XCTestCase {
+    func testPreviewChangesPreserveBaselineUntilExplicitCalibration() {
+        let detector = AirZoneDetector()
+        var configuration = AirConfiguration()
+        configuration.enabled = true
+        detector.configure(configuration)
+        var image = [UInt8](repeating: 100, count: 200 * 200)
+        func process(_ now: Double) -> Int? {
+            image.withUnsafeBufferPointer {
+                detector.processLuma($0.baseAddress!, width: 200, height: 200, stride: 200, now: now)?.mask
+            }
+        }
+        XCTAssertEqual(process(0), 0)
+        image = [UInt8](repeating: 180, count: image.count)
+        XCTAssertEqual(process(0.01), 63)
+        configuration.preview = true
+        XCTAssertEqual(detector.configure(configuration), 63)
+        XCTAssertEqual(process(0.02), 63)
+        configuration.recalibrate = true
+        detector.configure(configuration)
+        XCTAssertEqual(process(0.03), 0)
+    }
     func testCalibrationDetectionReleaseAndHeartbeat() throws {
         let detector = AirZoneDetector()
         var settings = AirConfiguration()

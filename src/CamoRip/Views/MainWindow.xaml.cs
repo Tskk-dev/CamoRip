@@ -12,6 +12,48 @@ public sealed partial class MainWindow : Window
 {
     private readonly AirInputBridge airBridge = new();
     private volatile bool airRequested;
+    private AirConfigure airSettings = new();
+    private int airMask;
+    private long airUpdateTicks;
+    private int airImageWidth = 1280, airImageHeight = 720;
+
+    private async void onAirPreview(object sender, RoutedEventArgs e)
+    {
+        if (!_ready || _updating || !airRequested) return;
+        await applyAir();
+        Refresh();
+    }
+
+    private void drawAirOverlay()
+    {
+        if (AirOverlay is null) return;
+        AirOverlay.Visibility = AirDetectionStatus.Visibility = airRequested ? Visibility.Visible : Visibility.Collapsed;
+        AirOverlay.Children.Clear();
+        if (!airRequested) return;
+        bool fresh = airUpdateTicks != 0 && Stopwatch.GetElapsedTime(airUpdateTicks).TotalMilliseconds < 500;
+        double viewWidth = AirOverlay.ActualWidth, viewHeight = AirOverlay.ActualHeight;
+        var rectangles = AirZoneLayout.Rectangles(airSettings, airImageWidth, airImageHeight, viewWidth, viewHeight);
+        AirOverlay.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, viewWidth, viewHeight) };
+        for (int zone = 0; zone < rectangles.Length; zone++)
+        {
+            var rectangle = rectangles[zone];
+            bool active = fresh && (airMask & (1 << zone)) != 0;
+            var color = active ? Microsoft.UI.Colors.LimeGreen : Microsoft.UI.Colors.White;
+            var border = new Border { Width = rectangle.Width, Height = rectangle.Height,
+                BorderThickness = new Thickness(3), BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(color),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(48, 0, 0, 0)) };
+            Canvas.SetLeft(border, rectangle.X); Canvas.SetTop(border, rectangle.Y);
+            AirOverlay.Children.Add(border);
+            var label = new TextBlock { Text = $"Zone {zone + 1}: {(active ? "TRIGGERED" : fresh ? "clear" : "no signal")}",
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(color), FontSize = 13 };
+            var badge = new Border { Child = label, Padding = new Thickness(4), CornerRadius = new CornerRadius(3),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) };
+            Canvas.SetLeft(badge, Math.Clamp(rectangle.X + rectangle.Width + 8, 0, Math.Max(0, viewWidth - 150)));
+            Canvas.SetTop(badge, rectangle.Y);
+            AirOverlay.Children.Add(badge);
+        }
+        AirDetectionStatus.Text = fresh ? "Live AIR sensors · green = triggered" : "Waiting for fresh AIR sensor data";
+    }
 
     private async void onAirEnabled(object sender, RoutedEventArgs e)
     {
@@ -22,16 +64,21 @@ public sealed partial class MainWindow : Window
         Refresh();
     }
 
-    private async void onAirCalibrate(object sender, RoutedEventArgs e) => await applyAir();
+    private async void onAirCalibrate(object sender, RoutedEventArgs e) => await applyAir(recalibrate: true);
 
-    private async Task applyAir()
+    private async Task applyAir(bool recalibrate = false)
     {
         try
         {
             var settings = airRequested ? new AirConfigure {
                 Enabled = airRequested, Threshold = AirThreshold.Value,
+                Preview = AirCalibrationPreview.IsOn && _service.Connection.SupportsAirPreview,
+                Recalibrate = recalibrate,
                 X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value } : new AirConfigure();
             await _service.Connection.ConfigureAirAsync(settings);
+            airSettings = settings;
+            if (recalibrate) { airMask = 0; airUpdateTicks = 0; }
+            drawAirOverlay();
             AirStatus.Text = airRequested ? "Calibrating: keep hands out of all six zones." : "AIR off";
         }
         catch (Exception ex)
@@ -44,6 +91,7 @@ public sealed partial class MainWindow : Window
             AirEnabled.IsOn = false;
             _updating = false;
             AirStatus.Text = ex.Message;
+            drawAirOverlay();
         }
     }
     private bool _pairingOpen;
@@ -155,7 +203,12 @@ public sealed partial class MainWindow : Window
             try
             {
                 if (_gpu is null) _gpu = new GpuPreview(Preview);
-                bool rendered = _gpu.Render(frame, App.Settings.PreviewFill, App.Settings.PreviewMirror);
+                bool rendered = _gpu.Render(frame, airRequested ? false : App.Settings.PreviewFill, airRequested ? false : App.Settings.PreviewMirror);
+                if (airRequested && (airImageWidth != frame.Width || airImageHeight != frame.Height))
+                {
+                    airImageWidth = frame.Width; airImageHeight = frame.Height;
+                    drawAirOverlay();
+                }
                 if (rendered) Waiting.Visibility = Visibility.Collapsed;
                 return rendered;
             }
@@ -173,6 +226,13 @@ public sealed partial class MainWindow : Window
         {
             airBridge.SetEnabled(airRequested && state.Enabled);
             if (airRequested && state.Enabled) airBridge.Update(state.Mask);
+            App.Ui(() =>
+            {
+                bool changed = airMask != (state.Enabled ? state.Mask : 0) || airUpdateTicks == 0;
+                airMask = state.Enabled ? state.Mask : 0;
+                airUpdateTicks = state.Enabled ? Stopwatch.GetTimestamp() : 0;
+                if (changed) drawAirOverlay();
+            });
         };
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
@@ -181,6 +241,8 @@ public sealed partial class MainWindow : Window
             else
             {
                 airRequested = false;
+                airMask = 0; airUpdateTicks = 0;
+                drawAirOverlay();
                 airBridge.SetEnabled(false);
                 _updating = true;
                 AirEnabled.IsOn = false;
@@ -251,6 +313,7 @@ public sealed partial class MainWindow : Window
         StreamButton.IsEnabled = SwitchCamera.IsEnabled = _service.Connected && !_service.ChangingMode && !airRequested;
         AirEnabled.IsEnabled = _service.Connected && _service.Connection.SupportsAir && !_service.ChangingMode;
         AirCalibrate.IsEnabled = AirEnabled.IsEnabled && airRequested;
+        AirCalibrationPreview.IsEnabled = _service.Connected && _service.Connection.SupportsAirPreview;
         StreamButton.Content = _service.Streaming ? "Stop video" : "Start video";
         if (_service.Streaming) ConnectionNotice.IsOpen = false;
         if (!_service.Streaming) { Preview.Visibility = Visibility.Collapsed; Waiting.Text = "Video stopped"; Waiting.Visibility = Visibility.Visible; }
@@ -324,6 +387,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePreviewVisibility()
     {
+        _service.PreviewFps = airRequested && AirCalibrationPreview.IsOn ? 30 : App.Settings.PreviewFps;
         _service.PreviewVisible = !_exiting && !_hidden && (AppWindow.Presenter is not OverlappedPresenter p || p.State != OverlappedPresenterState.Minimized);
         bool visible = _service.PreviewVisible && _service.PreviewFps > 0 && _service.Streaming;
         if (_rendering != visible)
@@ -333,9 +397,9 @@ public sealed partial class MainWindow : Window
             else Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnRendering;
         }
         Preview.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        if (!visible) { Waiting.Text = airRequested ? "AIR mode · phone sends zone inputs without video" : _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for video"; Waiting.Visibility = Visibility.Visible; }
+        if (!visible) { Waiting.Text = _service.PreviewFps == 0 ? "Preview off · webcam output continues" : "Waiting for video"; Waiting.Visibility = airRequested ? Visibility.Collapsed : Visibility.Visible; }
     }
-    internal void HideToTray() { _hidden = true; UpdatePreviewVisibility(); AppWindow.Hide(); }
+    internal void HideToTray() { if (airRequested) AirCalibrationPreview.IsOn = false; _hidden = true; UpdatePreviewVisibility(); AppWindow.Hide(); }
     internal void ShowFromTray()
     {
         _hidden = false; AppWindow.Show();
@@ -394,6 +458,11 @@ public sealed partial class MainWindow : Window
     }
     private async Task FlushCommands()
     {
+        if (airRequested && airUpdateTicks != 0 && Stopwatch.GetElapsedTime(airUpdateTicks).TotalMilliseconds >= 500)
+        {
+            airUpdateTicks = 0; airMask = 0;
+            drawAirOverlay();
+        }
         if (_switching && Stopwatch.GetElapsedTime(_lastSent).TotalSeconds > 5)
         { _switching = false; ControlStatus.Text = "Camera switch not confirmed. Refreshing controls…"; await Invoke(() => _service.Connection.RequestCameraStateAsync()); }
         if (_sending || !_service.Connected || _state is null) return;
@@ -474,6 +543,7 @@ public sealed partial class MainWindow : Window
     }
     private void OnPreviewSize(object sender, SizeChangedEventArgs e)
     {
+        drawAirOverlay();
         try { _gpu?.Resize(); }
         catch (Exception ex) { App.Log(ex); _gpu?.Dispose(); _gpu = null; Diagnostic.Text = "Preview resizing: " + ex.Message; }
     }

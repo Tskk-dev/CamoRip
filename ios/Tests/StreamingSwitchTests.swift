@@ -194,6 +194,25 @@ final class StreamingSwitchTests: XCTestCase {
         XCTAssertFalse(rig.phone.airConfiguration.enabled)
     }
 
+    @MainActor func testAirCalibrationVideoCanStopWhileDetectionRemainsEnabled() async throws {
+        let rig = try await connected(transport: .wifi)
+        var settings = AirConfiguration()
+        settings.enabled = true
+        settings.preview = true
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 1)
+        XCTAssertEqual(rig.pc.frames.count, 1)
+        XCTAssertTrue(rig.phone.airConfiguration.enabled)
+        XCTAssertEqual(rig.phone.state, .streaming)
+        settings.preview = false
+        try rig.pc.send(.airConfigure(settings)); await settle()
+        rig.phone.handleVideoSample(try sample()); await settle()
+        XCTAssertEqual(rig.encoder.encoded, 1)
+        XCTAssertTrue(rig.phone.airConfiguration.enabled)
+        XCTAssertEqual(rig.phone.state, .connected)
+    }
+
     @MainActor func testControlRequestsAndAcknowledgementsWorkOnBothTransports() async throws {
         for transport in [ConnectionManager.TransportType.usb, .wifi] {
             let rig = try await connected(transport: transport)
