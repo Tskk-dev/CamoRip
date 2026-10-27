@@ -9,6 +9,35 @@ namespace CamoRip.Tests;
 public class ConnectionManagerTests
 {
     [Fact]
+    public async Task AirCapabilityAndStateUseExistingConnectionAndRejectInvalidMasks()
+    {
+        using var service = new FakeAppleService();
+        var received = new TaskCompletionSource<AirState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = Task.Run(async () => {
+            await DiscoveryAsync(service);
+            await service.ServeOnceAsync(async (_, stream) => {
+                await FakeAppleService.ReplyAsync(stream, "<key>MessageType</key><string>Result</string><key>Number</key><integer>0</integer>");
+                Assert.IsType<Welcome>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new Hello { Capabilities = ["h264", "air_zones_v1"] });
+                var settings = Assert.IsType<AirConfigure>(await ReadControlAsync(stream));
+                Assert.True(settings.Enabled);
+                Assert.True(settings.IsValid);
+                await SendControlAsync(stream, new AirState { Enabled = true, Mask = 64 });
+                await SendControlAsync(stream, new AirState { Enabled = true, Mask = 7 });
+                await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            });
+        });
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(service.Port), TimeSpan.FromSeconds(1)));
+        manager.StateChanged += (_, state) => {
+            if (state == TransportState.Connected) _ = manager.ConfigureAirAsync(new AirConfigure { Enabled = true });
+        };
+        manager.AirStateReceived += (_, state) => received.TrySetResult(state);
+        await manager.StartAsync();
+        var result = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(7, result.Mask);
+        await server;
+    }
+    [Fact]
     public async Task UpdatedPhoneAcceptsHighBitrateAndReportsControlRoundTrip()
     {
         using var service = new FakeAppleService();

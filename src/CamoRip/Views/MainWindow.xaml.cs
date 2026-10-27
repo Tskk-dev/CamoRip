@@ -28,15 +28,18 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            await _service.Connection.ConfigureAirAsync(new AirConfigure {
+            var settings = airRequested ? new AirConfigure {
                 Enabled = airRequested, Threshold = AirThreshold.Value,
-                X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value });
+                X = AirX.Value, Y = AirY.Value, Span = AirSpan.Value } : new AirConfigure();
+            await _service.Connection.ConfigureAirAsync(settings);
             AirStatus.Text = airRequested ? "Calibrating: keep hands out of all six zones." : "AIR off";
         }
         catch (Exception ex)
         {
             airRequested = false;
             airBridge.SetEnabled(false);
+            try { await _service.Connection.ConfigureAirAsync(new AirConfigure()); }
+            catch (Exception stopError) { App.Log(stopError); }
             _updating = true;
             AirEnabled.IsOn = false;
             _updating = false;
