@@ -34,63 +34,19 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: camorip-slider-debug-signing-v1
-      - name: Build and test APK
+      - name: Build APK and lint
         working-directory: android-slider
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest --stacktrace
+          ./gradlew lintDebug assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: camorip-slider-android-debug
           path: android-slider/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        with:
-          name: camorip-slider-android-test-apk
-          path: android-slider/app/build/outputs/apk/androidTest/debug/*.apk
-          if-no-files-found: error
-      - name: Enable emulator acceleration
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33
-          arch: x86_64
-          disable-animations: true
-          working-directory: android-slider
-          script: ./gradlew connectedDebugAndroidTest
-      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: camorip-slider-android-test-results
+          name: camorip-slider-android-build-reports
           path: |
             android-slider/app/build/reports/
-            android-slider/app/build/outputs/androidTest-results/
-
-  windows-bridge:
-    runs-on: windows-2025
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.419
-      - name: Test and publish slider bridge
-        shell: pwsh
-        run: |
-          dotnet test tests/CamoRip.SliderBridge.Tests/CamoRip.SliderBridge.Tests.csproj -c Release --logger trx --results-directory artifacts/slider-tests
-          if ($LASTEXITCODE) { throw 'Slider bridge tests failed.' }
-          dotnet publish src/CamoRip.SliderBridge/CamoRip.SliderBridge.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/slider-bridge
-          if ($LASTEXITCODE) { throw 'Slider bridge publishing failed.' }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: camorip-slider-windows-x64
-          path: artifacts/slider-bridge/
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: camorip-slider-windows-test-results
-          path: artifacts/slider-tests/

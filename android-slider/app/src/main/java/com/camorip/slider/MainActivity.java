@@ -1,200 +1,216 @@
 package com.camorip.slider;
 
-import android.app.Activity;
-import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Bundle;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.CheckBox;
-import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.Spinner;
-import android.widget.ArrayAdapter;
 import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.color.DynamicColors;
+import com.google.android.material.color.DynamicColorsOptions;
+import com.google.android.material.color.MaterialColors;
+import com.google.android.material.snackbar.Snackbar;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-public final class MainActivity extends Activity {
+public final class MainActivity extends AppCompatActivity {
     SliderView slider;
+    SharedPreferences preferences;
     private SliderConnection connection;
-    private SharedPreferences preferences;
     private TextView status;
-    private Button connect;
-    private boolean requested;
-    private boolean foreground;
+    private MaterialButton connect;
+    private MaterialCardView chrome;
+    private MaterialButton restore;
+    private boolean requested, foreground, connected;
+    private boolean testHeld, serviceHeld;
     private int connectionGeneration;
-    private String connectionStatus = "USB slider · CamoRip handles AIR";
+    private String connectionStatus = "Ready";
+    private final ExecutorService files = Executors.newSingleThreadExecutor();
+    private long backgroundGeneration;
 
     @Override public void onCreate(Bundle state) {
-        super.onCreate(state);
         preferences = getSharedPreferences("slider", MODE_PRIVATE);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().setSustainedPerformanceMode(true);
-        android.view.Display display = getWindowManager().getDefaultDisplay();
-        android.view.Display.Mode fastest = display.getMode();
-        for (android.view.Display.Mode mode : display.getSupportedModes()) {
-            if (mode.getPhysicalWidth() == fastest.getPhysicalWidth() && mode.getPhysicalHeight() == fastest.getPhysicalHeight() &&
-                mode.getRefreshRate() > fastest.getRefreshRate()) fastest = mode;
-        }
-        WindowManager.LayoutParams window = getWindow().getAttributes();
-        window.preferredDisplayModeId = fastest.getModeId();
-        getWindow().setAttributes(window);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        status = new TextView(this);
-        status.setPadding(16, 0, 8, 0);
-        bar.addView(status, new LinearLayout.LayoutParams(0, dp(52), 1));
-        connect = new Button(this);
-        connect.setText("Connect USB");
-        connect.setOnClickListener(view -> { requested = !requested; restart(); });
-        bar.addView(connect);
-        Button settings = new Button(this);
-        settings.setText("Settings");
-        settings.setOnClickListener(view -> settings());
-        bar.addView(settings);
-        root.addView(bar);
+        String theme = preferences.getString("theme", preferences.getBoolean("light", false) ? "light" : "system");
+        AppCompatDelegate.setDefaultNightMode(theme.equals("light") ? AppCompatDelegate.MODE_NIGHT_NO :
+            theme.equals("dark") ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+        setTheme(preferences.getBoolean("expressive", true) ? R.style.Theme_CamoRipSlider : R.style.Theme_CamoRipSlider_Classic);
+        super.onCreate(state);
+        if (preferences.getBoolean("dynamic", true)) DynamicColors.applyToActivityIfAvailable(this);
+        else DynamicColors.applyToActivityIfAvailable(this, new DynamicColorsOptions.Builder()
+            .setContentBasedSource(preferences.getInt("seed", 0xff455e91)).build());
+        requested = state == null ? preferences.getBoolean("autoConnect", false) : state.getBoolean("connect");
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(MaterialColors.getColor(root, com.google.android.material.R.attr.colorSurface));
         slider = new SliderView(this, mask -> { if (connection != null) connection.update(mask); });
-        root.addView(slider, new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(slider, new FrameLayout.LayoutParams(-1, -1));
+        chrome = new MaterialCardView(this); chrome.setRadius(dp(28)); chrome.setCardElevation(0);
+        chrome.setCardBackgroundColor(MaterialColors.getColor(root, com.google.android.material.R.attr.colorSurfaceContainer));
+        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(20), dp(8), dp(12), dp(8));
+        LinearLayout title = new LinearLayout(this); title.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(this); name.setText("CamoRip Slider"); name.setTextSize(24);
+        name.setTypeface(null, android.graphics.Typeface.BOLD); title.addView(name);
+        status = new TextView(this); status.setTextSize(12); title.addView(status);
+        bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        connect = button("Connect", () -> { requested = !requested; restart(); }); bar.addView(connect);
+        bar.addView(button("Settings", () -> { slider.release(); new SettingsSheet(this).show(); }));
+        bar.addView(button("Hide", () -> { chrome.setVisibility(View.GONE); restore.setVisibility(View.VISIBLE); }));
+        chrome.addView(bar);
+        FrameLayout.LayoutParams header = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        header.setMargins(dp(16), dp(12), dp(16), 0); root.addView(chrome, header);
+        restore = button("Controls", () -> { chrome.setVisibility(View.VISIBLE); restore.setVisibility(View.GONE); });
+        FrameLayout.LayoutParams handle = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        handle.setMargins(0, dp(8), dp(16), 0); root.addView(restore, handle); restore.setVisibility(View.GONE);
         setContentView(root);
+        ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom); return insets;
+        });
         applyPreferences();
-        status.setText(connectionStatus);
-        getWindow().getDecorView().postDelayed(new Runnable() {
+        root.postDelayed(new Runnable() {
             @Override public void run() {
                 if (isDestroyed()) return;
                 SliderConnection current = connection;
-                status.setText(connectionStatus + (current == null ? "" : " · TX " + current.packetsSent +
-                    " · PC ACK " + (current.roundTripMicros < 0 ? "--" : current.roundTripMicros / 1000.0 + " ms")));
-                getWindow().getDecorView().postDelayed(this, 250);
+                String ack = current == null || current.roundTripMicros < 0 ? "" : String.format(java.util.Locale.ROOT, " · %.1f ms RTT", current.roundTripMicros / 1000.0);
+                status.setText(SliderText.get(MainActivity.this, connectionStatus) + ack); root.postDelayed(this, 500);
             }
-        }, 250);
+        }, 500);
     }
 
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    MaterialButton button(String label, Runnable action) {
+        MaterialButton button = new MaterialButton(this);
+        button.setText(SliderText.get(this, label)); button.setMinHeight(dp(48)); button.setOnClickListener(view -> action.run());
+        return button;
+    }
+    void message(String text) { if (!isDestroyed() && !isFinishing()) Snackbar.make(slider, text, Snackbar.LENGTH_LONG).show(); }
 
-    private void restart() {
+    void restart() {
         int generation = ++connectionGeneration;
-        slider.release();
-        if (connection != null) connection.close();
-        connection = null;
-        connect.setText(requested ? "Disconnect" : "Connect USB");
-        connectionStatus = "Disconnected";
+        slider.release(); if (connection != null) connection.close(); connection = null; connected = false;
+        connect.setText(SliderText.get(this, requested ? "Disconnect" : "Connect")); connectionStatus = "Disconnected";
         if (!requested || !foreground) return;
-        SliderConnection next = new SliderConnection(preferences.getInt("port", 52468),
-            preferences.getInt("frequency", 240), new SliderConnection.Observer() {
-                @Override public void status(String text, boolean connected) {
+        String mode = preferences.getString("mode", "usb"), host = preferences.getString("host", "192.168.1.2");
+        SliderConnection next = new SliderConnection(preferences.getInt("port", 52468), preferences.getInt("frequency", 240),
+            new SliderConnection.Observer() {
+                @Override public void status(String text, boolean ready) {
                     runOnUiThread(() -> {
-                        if (generation != connectionGeneration || connection == null || !requested || !foreground) return;
-                        connectionStatus = text;
-                        slider.release();
+                        if (generation != connectionGeneration || !requested || !foreground) return;
+                        connected = ready; connectionStatus = ready ? "Connected" : "Waiting for PC"; slider.release();
                     });
                 }
                 @Override public void leds(byte[] rgb) {
+                    if (!preferences.getBoolean("leds", true)) return;
                     runOnUiThread(() -> { if (generation == connectionGeneration && connection != null) slider.setLeds(rgb); });
                 }
-            });
-        connection = next;
-        next.start();
+            }, () -> mode.equals("usb") ? new AdbLink() : new NetworkLink(host, mode.equals("udp")), new InputQueue());
+        connection = next; next.start();
     }
 
-    private void applyPreferences() {
-        slider.release();
-        slider.columns = preferences.getInt("columns", 32);
-        slider.sensitivity = preferences.getInt("sensitivity", 8) / 100f;
-        slider.areaPercent = preferences.getInt("area", 80);
-        slider.grid = preferences.getBoolean("grid", true);
-        slider.diagnostics = preferences.getBoolean("diagnostics", true);
-        slider.gameLeds = preferences.getBoolean("leds", true);
-        slider.haptics = preferences.getBoolean("haptics", false);
-        slider.lightTheme = preferences.getBoolean("light", false);
-        slider.invalidate();
+    void applyPreferences() {
+        slider.release(); slider.columns = preferences.getInt("columns", 32); slider.sensitivity = preferences.getInt("sensitivity", 8) / 100f;
+        slider.areaPercent = preferences.getInt("area", 80); slider.grid = preferences.getBoolean("grid", true);
+        slider.diagnostics = preferences.getBoolean("diagnostics", false); slider.gameLeds = preferences.getBoolean("leds", true);
+        slider.haptics = preferences.getBoolean("haptics", false); slider.mirror = preferences.getBoolean("mirror", false);
+        slider.swapRows = preferences.getBoolean("swapRows", false); slider.ledBrightness = preferences.getInt("ledBrightness", 100);
+        slider.backgroundOpacity = preferences.getInt("backgroundOpacity", 40);
+        int pattern = preferences.getInt("ledPattern", 0), seed = preferences.getInt("seed", 0xff455e91);
+        for (int sensor = 0; sensor < 32; sensor++) {
+            int color = pattern == 2 ? android.graphics.Color.HSVToColor(new float[] {sensor * 360f / 32, 0.6f, 0.7f}) :
+                pattern == 1 && sensor % 2 == 0 ? 0xff303030 : seed;
+            slider.presetColors[sensor] = android.graphics.Color.rgb(android.graphics.Color.red(color) * slider.ledBrightness / 100,
+                android.graphics.Color.green(color) * slider.ledBrightness / 100, android.graphics.Color.blue(color) * slider.ledBrightness / 100);
+        }
+        slider.lightTheme = (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) != android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        slider.accent = MaterialColors.getColor(slider, com.google.android.material.R.attr.colorPrimaryContainer); slider.invalidate(); loadBackground();
     }
 
-    private void settings() {
-        slider.release();
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(20), 0, dp(20), 0);
-        TextView help = new TextView(this);
-        help.setText("Start CamoRip.SliderBridge.exe on PC, then run:\nadb reverse localabstract:camorip-slider-52468 tcp:52468\n\n" +
-            "AIR stays on CamoRip. Touch changes send immediately; the rate below controls unchanged-state heartbeats.");
-        form.addView(help);
-        Spinner layout = choices(form, "Sensor layout", new String[] { "32 columns", "16 columns × 2 rows" }, slider.columns == 32 ? 0 : 1);
-        int[] rates = { 60, 120, 240, 500, 1000 };
-        int selected = 2;
-        for (int index = 0; index < rates.length; index++) if (rates[index] == preferences.getInt("frequency", 240)) selected = index;
-        Spinner rate = choices(form, "Heartbeat rate", new String[] { "60 Hz", "120 Hz", "240 Hz", "500 Hz", "1000 Hz" }, selected);
-        EditText port = number(form, "Local TCP port", preferences.getInt("port", 52468));
-        EditText sensitivity = number(form, "Touch overlap (0–50% of one column)", preferences.getInt("sensitivity", 8));
-        EditText area = number(form, "Play area height (30–100%)", slider.areaPercent);
-        CheckBox grid = toggle(form, "Sensor grid", slider.grid);
-        CheckBox diagnostics = toggle(form, "Finger and input diagnostics", slider.diagnostics);
-        CheckBox leds = toggle(form, "Game LED feedback", slider.gameLeds);
-        CheckBox haptics = toggle(form, "Touch haptics", slider.haptics);
-        CheckBox light = toggle(form, "Light background", slider.lightTheme);
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(form);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("CamoRip Slider")
-            .setView(scroll).setNegativeButton("Cancel", null).setPositiveButton("Apply", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+    void holdButton(boolean test, boolean held) {
+        if (test) testHeld = held; else serviceHeld = held;
+        if (connected && connection != null) connection.buttons(testHeld, serviceHeld);
+    }
+    void coin() { if (ready()) connection.command(new byte[] {4, 'F', 'N', 'C', 1}); }
+    private boolean ready() { if (connected && connection != null) return true; message("Connect to your PC first"); return false; }
+    void card() {
+        if (!ready()) return;
+        String digits = preferences.getString("card", "");
+        if (!digits.matches("[0-9]{20}")) { message("Save a 20-digit card access code first"); return; }
+        byte[] packet = new byte[16]; packet[0] = 15; packet[1] = 'C'; packet[2] = 'R'; packet[3] = 'D'; packet[4] = packet[5] = 1;
+        for (int index = 0; index < 10; index++) packet[index + 6] = (byte)(((digits.charAt(index * 2) - '0') << 4) | (digits.charAt(index * 2 + 1) - '0'));
+        connection.command(packet);
+    }
+
+    void pick(int request, String type) {
+        Intent intent = new Intent(request == 12 ? Intent.ACTION_CREATE_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType(type);
+        if (request == 12) intent.putExtra(Intent.EXTRA_TITLE, "camorip-slider.json"); startActivityForResult(intent, request);
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData(); files.execute(() -> {
             try {
-                int p = Integer.parseInt(port.getText().toString());
-                int s = Integer.parseInt(sensitivity.getText().toString());
-                int a = Integer.parseInt(area.getText().toString());
-                if (p < 1 || p > 65535) { port.setError("Use 1–65535"); return; }
-                if (s < 0 || s > 50) { sensitivity.setError("Use 0–50"); return; }
-                if (a < 30 || a > 100) { area.setError("Use 30–100"); return; }
-                preferences.edit().putInt("port", p).putInt("sensitivity", s).putInt("area", a)
-                    .putInt("columns", layout.getSelectedItemPosition() == 0 ? 32 : 16)
-                    .putInt("frequency", rates[rate.getSelectedItemPosition()])
-                    .putBoolean("grid", grid.isChecked()).putBoolean("diagnostics", diagnostics.isChecked())
-                    .putBoolean("leds", leds.isChecked()).putBoolean("haptics", haptics.isChecked())
-                    .putBoolean("light", light.isChecked()).apply();
-                applyPreferences();
-                restart();
-                dialog.dismiss();
-            } catch (NumberFormatException error) { port.setError("Fill all numeric fields with whole numbers"); }
-        }));
-        dialog.show();
+                if (request == 10) {
+                    getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    preferences.edit().putString("background", uri.toString()).apply(); runOnUiThread(this::loadBackground);
+                } else if (request == 11) {
+                    try (InputStream input = getContentResolver().openInputStream(uri)) {
+                        if (input == null) throw new java.io.IOException("Could not open skin");
+                        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(); byte[] buffer = new byte[4096]; int count;
+                        while ((count = input.read(buffer)) != -1) { bytes.write(buffer, 0, count); if (bytes.size() > 65536) throw new java.io.IOException("Skin is too large"); }
+                        SliderConfig.importSkin(preferences, new org.json.JSONObject(bytes.toString("UTF-8")));
+                    }
+                    runOnUiThread(this::recreate);
+                } else if (request == 12) {
+                    try (OutputStream output = getContentResolver().openOutputStream(uri)) {
+                        if (output == null) throw new java.io.IOException("Could not save settings");
+                        output.write(SliderConfig.export(preferences).toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    runOnUiThread(() -> message("Settings exported"));
+                }
+            } catch (Exception error) { runOnUiThread(() -> message(error.getMessage() == null ? "Could not open file" : error.getMessage())); }
+        });
     }
 
-    private Spinner choices(LinearLayout form, String label, String[] options, int selected) {
-        TextView title = new TextView(this); title.setText(label); form.addView(title);
-        Spinner spinner = new Spinner(this);
-        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, options));
-        spinner.setSelection(selected);
-        form.addView(spinner);
-        return spinner;
+    void loadBackground() {
+        long generation = ++backgroundGeneration; String path = preferences.getString("background", "");
+        if (path.isEmpty()) { slider.setBackgroundImage(null); return; }
+        files.execute(() -> {
+            try {
+                Uri uri = Uri.parse(path); BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
+                try (InputStream input = getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(input, null, options); }
+                if (options.outWidth <= 0 || options.outHeight <= 0) throw new java.io.IOException("Unsupported image");
+                options.inSampleSize = 1;
+                while (options.outWidth / options.inSampleSize > 2048 || options.outHeight / options.inSampleSize > 2048) options.inSampleSize *= 2;
+                options.inJustDecodeBounds = false; Bitmap image;
+                try (InputStream input = getContentResolver().openInputStream(uri)) { image = BitmapFactory.decodeStream(input, null, options); }
+                runOnUiThread(() -> { if (!isDestroyed() && generation == backgroundGeneration) slider.setBackgroundImage(image); });
+            } catch (Exception error) { runOnUiThread(() -> message("Background image is unavailable")); }
+        });
     }
 
-    private EditText number(LinearLayout form, String label, int value) {
-        TextView title = new TextView(this); title.setText(label); form.addView(title);
-        EditText edit = new EditText(this);
-        edit.setContentDescription(label);
-        edit.setInputType(InputType.TYPE_CLASS_NUMBER);
-        edit.setSingleLine(true);
-        edit.setText(Integer.toString(value));
-        form.addView(edit);
-        return edit;
-    }
-
-    private CheckBox toggle(LinearLayout form, String label, boolean checked) {
-        CheckBox toggle = new CheckBox(this);
-        toggle.setText(label); toggle.setChecked(checked); form.addView(toggle);
-        return toggle;
-    }
-
+    @Override protected void onSaveInstanceState(Bundle state) { state.putBoolean("connect", requested); super.onSaveInstanceState(state); }
     @Override protected void onResume() { super.onResume(); foreground = true; restart(); }
     @Override protected void onPause() { foreground = false; restart(); super.onPause(); }
+    @Override protected void onDestroy() { files.shutdownNow(); super.onDestroy(); }
     @Override public void onWindowFocusChanged(boolean focused) {
-        super.onWindowFocusChanged(focused);
-        if (slider == null) return;
-        if (!focused) slider.release();
-        else getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        super.onWindowFocusChanged(focused); if (slider == null) return;
+        if (!focused) { slider.release(); testHeld = serviceHeld = false; if (connection != null) connection.buttons(false, false); }
+        else androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView()).hide(WindowInsetsCompat.Type.systemBars());
     }
 }

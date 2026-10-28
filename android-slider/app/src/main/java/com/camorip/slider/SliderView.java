@@ -24,6 +24,14 @@ final class SliderView extends View {
     boolean gameLeds = true;
     boolean diagnostics = true;
     boolean lightTheme;
+    boolean mirror;
+    boolean swapRows;
+    int accent = Color.WHITE;
+    int ledBrightness = 100;
+    int backgroundOpacity = 40;
+    final int[] presetColors = new int[32];
+    private android.graphics.Bitmap background;
+    private final android.graphics.RectF imageBounds = new android.graphics.RectF();
     private byte[] leds = new byte[96];
     private long mask;
     private int cancellations;
@@ -38,6 +46,7 @@ final class SliderView extends View {
     long mask() { return mask; }
     int fingers() { return touches.count(); }
     void setLeds(byte[] rgb) { leds = rgb.clone(); postInvalidateOnAnimation(); }
+    void setBackgroundImage(android.graphics.Bitmap image) { background = image; invalidate(); }
     private float top() { return getHeight() * (1 - areaPercent / 100f); }
 
     void release() {
@@ -78,8 +87,10 @@ final class SliderView extends View {
             if (pointer == excluded) continue;
             float x = history < 0 ? event.getX(pointer) : event.getHistoricalX(pointer, history);
             float y = history < 0 ? event.getY(pointer) : event.getHistoricalY(pointer, history);
+            float sensorX = mirror ? getWidth() - x - 0.001f : x;
+            float sensorY = swapRows && columns == 16 ? getHeight() - y - 0.001f : y - top();
             int id = event.getPointerId(pointer);
-            touches.set(id, x, y - top(), getWidth(), getHeight() - top(), columns, sensitivity);
+            touches.set(id, sensorX, sensorY, getWidth(), getHeight() - top(), columns, sensitivity);
             points.put(id, new float[] { x, y });
         }
         publish();
@@ -90,19 +101,30 @@ final class SliderView extends View {
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         canvas.drawColor(lightTheme ? Color.WHITE : Color.rgb(15, 15, 15));
+        if (background != null) {
+            paint.setAlpha(backgroundOpacity * 255 / 100);
+            imageBounds.set(0, 0, getWidth(), getHeight());
+            canvas.drawBitmap(background, null, imageBounds, paint);
+            paint.setAlpha(255);
+        }
         float top = top(), width = getWidth() / (float) columns;
         int rows = 32 / columns;
         float height = (getHeight() - top) / rows;
         for (int column = 0; column < columns; column++) {
             for (int row = 0; row < rows; row++) {
-                int sensor = 31 - column * rows - row;
+                int mappedColumn = mirror ? columns - column - 1 : column;
+                int mappedRow = swapRows && rows == 2 ? 1 - row : row;
+                int sensor = 31 - mappedColumn * rows - mappedRow;
                 boolean active = (mask & (1L << sensor)) != 0;
                 int offset = sensor * 3;
-                int color = gameLeds ? Color.rgb(leds[offset] & 255, leds[offset + 1] & 255, leds[offset + 2] & 255) : Color.rgb(38, 38, 38);
-                paint.setColor(active ? Color.WHITE : color);
+                int color = gameLeds ? Color.rgb((leds[offset] & 255) * ledBrightness / 100,
+                    (leds[offset + 1] & 255) * ledBrightness / 100, (leds[offset + 2] & 255) * ledBrightness / 100) : presetColors[sensor];
+                paint.setColor(active ? accent : color);
+                if (!active && background != null && !gameLeds) paint.setAlpha(160);
                 paint.setStyle(Paint.Style.FILL);
                 float x = column * width, y = top + row * height;
                 canvas.drawRect(x + 1, y + 1, x + width - 1, y + height - 1, paint);
+                paint.setAlpha(255);
                 if (grid) {
                     paint.setColor(active ? Color.BLACK : Color.GRAY);
                     paint.setStyle(Paint.Style.STROKE);

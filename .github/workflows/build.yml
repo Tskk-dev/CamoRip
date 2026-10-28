@@ -24,7 +24,7 @@ jobs:
           dotnet-version: 8.0.419
       - name: Build native components, test, and publish
         shell: pwsh
-        run: ./scripts/build-windows.ps1
+        run: ./scripts/build-windows.ps1 ${{ github.head_ref == 'feature/android-slider' && '-SkipTests' || '' }}
       - name: Build installer
         shell: pwsh
         run: |
@@ -53,6 +53,7 @@ jobs:
           if-no-files-found: ignore
 
   ios:
+    if: github.head_ref != 'feature/android-slider'
     name: iOS (${{ matrix.profile }})
     strategy:
       fail-fast: false

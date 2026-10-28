@@ -1,4 +1,4 @@
-using CamoRip.SliderBridge;
+using CamoRip.Core.Slider;
 using System.IO.MemoryMappedFiles;
 
 bool benchmark = args.Length == 1 && args[0] == "--benchmark";

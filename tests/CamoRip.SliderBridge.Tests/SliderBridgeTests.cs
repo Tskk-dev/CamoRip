@@ -1,7 +1,7 @@
 using System.IO.MemoryMappedFiles;
 using System.Net;
 using System.Net.Sockets;
-using CamoRip.SliderBridge;
+using CamoRip.Core.Slider;
 
 namespace CamoRip.SliderBridge.Tests;
 
@@ -16,7 +16,7 @@ public class SliderBridgeTests
     }
 
     [Fact]
-    public void SliderWritesAndReleasesPreserveAirLedsAndServiceButtons()
+    public void SliderWritesAndReleasesPreserveAirAndLedsAndReleaseGameButtons()
     {
         string name = @"Local\CamoRip_Slider_Test_" + Guid.NewGuid();
         using var mapping = MemoryMappedFile.CreateNew(name, 150);
@@ -31,7 +31,7 @@ public class SliderBridgeTests
             Assert.Equal(128, view.ReadByte(6));
         }
         Assert.Equal(0, view.ReadByte(6)); Assert.Equal(0, view.ReadByte(37));
-        Assert.Equal(63, view.ReadByte(0)); Assert.Equal(42, view.ReadByte(38)); Assert.Equal(1, view.ReadByte(134));
+        Assert.Equal(63, view.ReadByte(0)); Assert.Equal(42, view.ReadByte(38)); Assert.Equal(0, view.ReadByte(134));
     }
 
     [Fact]

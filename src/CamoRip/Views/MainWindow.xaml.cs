@@ -190,6 +190,11 @@ public sealed partial class MainWindow : Window
         }
         _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(RefreshModes);
         var settings = App.Settings;
+        SliderEnabled.IsOn = settings.SliderEnabled;
+        SliderPort.Value = settings.SliderPort;
+        SliderMode.SelectedIndex = settings.SliderMode switch { "tcp" => 1, "udp" => 2, _ => 0 };
+        SliderAdb.Text = settings.AdbPath;
+        _app.Slider.Changed += status => App.Ui(() => SliderStatus.Text = status);
         Quality.ItemsSource = Enum.GetValues<VideoQuality>();
         Quality.SelectedItem = settings.CaptureQuality;
         CustomBitrate.Value = settings.CustomBitrateMbps;
@@ -423,6 +428,64 @@ public sealed partial class MainWindow : Window
         PreviewPage.Visibility = selected == "preview" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = selected == "settings" ? Visibility.Visible : Visibility.Collapsed;
         AirPage.Visibility = selected == "air" ? Visibility.Visible : Visibility.Collapsed;
+        SliderPage.Visibility = selected == "slider" ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private async void onSliderEnabled(object sender, RoutedEventArgs e)
+    {
+        if (!_ready || _updating || AppSettings.Isolated) return;
+        App.Settings.SliderEnabled = SliderEnabled.IsOn;
+        App.Settings.Save();
+        try { if (SliderEnabled.IsOn) await _app.Slider.StartAsync(); else await _app.Slider.StopAsync(); }
+        catch (Exception error) { SliderStatus.Text = error.Message; App.Log(error); }
+    }
+
+    private async void onSliderApply(object sender, RoutedEventArgs e)
+    {
+        if (!double.IsFinite(SliderPort.Value) || SliderPort.Value is < 1 or > 65535 || SliderPort.Value != Math.Truncate(SliderPort.Value))
+        { SliderStatus.Text = "Choose a port from 1 to 65535."; return; }
+        try {
+        App.Settings.SliderPort = (int)SliderPort.Value;
+        App.Settings.SliderMode = SliderMode.SelectedIndex switch { 1 => "tcp", 2 => "udp", _ => "usb" };
+        App.Settings.AdbPath = SliderAdb.Text.Trim();
+        App.Settings.Save();
+        if (SliderEnabled.IsOn) await _app.Slider.StartAsync();
+        if (SliderMode.SelectedIndex != 0)
+            SliderStatus.Text = "PC address: " + string.Join(", ", (await System.Net.Dns.GetHostAddressesAsync(System.Net.Dns.GetHostName()))
+                .Where(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(address)));
+        } catch (Exception error) { SliderStatus.Text = error.Message; App.Log(error); }
+    }
+
+    private async void onSliderScan(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var devices = await SliderReceiver.DevicesAsync(SliderAdb.Text.Trim());
+            SliderDevices.ItemsSource = devices;
+            SliderDevices.SelectedIndex = devices.Length == 1 ? 0 : -1;
+            SliderStatus.Text = devices.Length == 0 ? "Unlock the tablet and allow USB debugging." : "Select your tablet";
+        }
+        catch (Exception error) { SliderStatus.Text = error.Message; }
+    }
+
+    private async void onSliderConnect(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (SliderDevices.SelectedItem is not string serial) { SliderStatus.Text = "Find and select your tablet first."; return; }
+            if (!double.IsFinite(SliderPort.Value) || SliderPort.Value is < 1 or > 65535 || SliderPort.Value != Math.Truncate(SliderPort.Value))
+            { SliderStatus.Text = "Choose a port from 1 to 65535."; return; }
+            App.Settings.SliderPort = (int)SliderPort.Value;
+            App.Settings.SliderMode = "usb";
+            App.Settings.SliderEnabled = true;
+            App.Settings.AdbPath = SliderAdb.Text.Trim();
+            App.Settings.Save();
+            SliderMode.SelectedIndex = 0;
+            _updating = true; SliderEnabled.IsOn = true; _updating = false;
+            await _app.Slider.StartAsync();
+            await SliderReceiver.ConnectUsbAsync(SliderAdb.Text.Trim(), serial, App.Settings.SliderPort);
+            SliderStatus.Text = "Ready · tap Connect on the tablet";
+        }
+        catch (Exception error) { SliderStatus.Text = error.Message; }
     }
     private async Task Invoke(Func<Task> action)
     { try { await action(); } catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); } }

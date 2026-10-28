@@ -15,6 +15,7 @@ final class InputQueue {
 
     synchronized void connect() { changes.clear(); current = 0; connected = true; notifyAll(); }
     synchronized void disconnect() { changes.clear(); current = 0; connected = false; notifyAll(); }
+    synchronized void wake() { if (connected && changes.size() < 64) changes.addLast(new long[] { current, clock.getAsLong() }); notifyAll(); }
 
     synchronized boolean update(long mask) {
         mask &= 0xffffffffL;

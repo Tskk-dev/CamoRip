@@ -37,6 +37,8 @@ final class SliderConnection implements AutoCloseable {
     volatile long packetsSent;
     volatile long sentMask;
     private final Thread worker;
+    private final java.util.concurrent.ArrayBlockingQueue<byte[]> commands = new java.util.concurrent.ArrayBlockingQueue<>(16);
+    private volatile boolean testButton, serviceButton;
 
     SliderConnection(int port, int frequency, Observer observer) {
         this(port, frequency, observer, AdbLink::new, new InputQueue());
@@ -71,6 +73,9 @@ final class SliderConnection implements AutoCloseable {
         }
     }
 
+    void buttons(boolean test, boolean service) { testButton = test; serviceButton = service; queue.wake(); }
+    void command(byte[] packet) { if (commands.offer(packet.clone())) queue.wake(); }
+
     private void run() {
         int sequence = 1;
         while (running) {
@@ -82,13 +87,20 @@ final class SliderConnection implements AutoCloseable {
                 OutputStream output = current.output();
                 write(output, SliderProtocol.input(0, sequence++));
                 queue.connect();
-                observer.status("USB connected", true);
+                observer.status("Waiting for PC", false);
                 Thread reader = new Thread(() -> receive(current), "slider-leds");
                 reader.setDaemon(true);
                 reader.start();
                 while (running && !current.closed()) {
                     long mask = queue.next(1_000_000_000L / frequency);
-                    write(output, SliderProtocol.input(mask, sequence++));
+                    byte[] command;
+                    while ((command = commands.poll()) != null) {
+                        writeStarted = System.nanoTime();
+                        try { output.write(command); } finally { writeStarted = 0; }
+                    }
+                    byte[] packet = SliderProtocol.input(mask, sequence++);
+                    packet[40] = testButton ? (byte)1 : 0; packet[41] = serviceButton ? (byte)1 : 0;
+                    write(output, packet);
                     sentMask = mask;
                     packetsSent++;
                 }
@@ -99,6 +111,7 @@ final class SliderConnection implements AutoCloseable {
                 break;
             } finally {
                 queue.disconnect();
+                commands.clear(); testButton = serviceButton = false;
                 sentMask = 0;
                 closeSocket(current);
             }
@@ -120,8 +133,13 @@ final class SliderConnection implements AutoCloseable {
 
     private void receive(Link current) {
         try {
+            InputStream input = current.input();
+            boolean announced = false;
             while (running && socket == current) {
-                byte[] frame = SliderProtocol.readFrame(current.input());
+                byte[] frame = SliderProtocol.readFrame(input);
+                boolean feedback = frame.length == 100 && frame[1] == 'L' && frame[2] == 'E' && frame[3] == 'D' ||
+                    frame.length == 8 && frame[1] == 'A' && frame[2] == 'C' && frame[3] == 'K';
+                if (feedback && !announced) { announced = true; observer.status("Connected", true); }
                 if (frame.length == 100 && frame[1] == 'L' && frame[2] == 'E' && frame[3] == 'D' && socket == current)
                     observer.leds(Arrays.copyOfRange(frame, 4, 100));
                 else if (frame.length == 8 && frame[1] == 'A' && frame[2] == 'C' && frame[3] == 'K') {

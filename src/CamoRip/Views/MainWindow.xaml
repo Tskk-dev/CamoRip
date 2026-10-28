@@ -18,6 +18,7 @@
       <ListViewItem Tag="preview"><StackPanel Orientation="Horizontal" Spacing="12"><SymbolIcon Symbol="View" /><TextBlock Text="Preview" /></StackPanel></ListViewItem>
       <ListViewItem Tag="settings"><StackPanel Orientation="Horizontal" Spacing="12"><SymbolIcon Symbol="Setting" /><TextBlock Text="Settings" /></StackPanel></ListViewItem>
       <ListViewItem Tag="air"><TextBlock Text="Chunithm AIR" /></ListViewItem>
+      <ListViewItem Tag="slider"><TextBlock Text="Android slider" /></ListViewItem>
      </ListView>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel Margin="20,16,20,24" Spacing="16">
@@ -78,7 +79,20 @@
        <NumberBox x:Name="AirWidth" Header="Zone width (% of image)" Value="20" Minimum="1" Maximum="100" SmallChange="5" IsEnabled="False" />
        <Button x:Name="AirCalibrate" Content="Apply and recalibrate empty background" Click="onAirCalibrate" IsEnabled="False" HorizontalAlignment="Stretch" />
        <TextBlock x:Name="AirStatus" Text="Install the AIR branch phone app, then connect over USB or Wi-Fi." TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-       <TextBlock Text="Requires the Brokenithm input DLL and its Local\BROKENITHM_SHARED_BUFFER mapping. Input stops after 500 ms without a phone update. Turn AIR off to use the webcam again." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+      </StackPanel>
+      <StackPanel x:Name="SliderPage" Spacing="16" Visibility="Collapsed">
+       <TextBlock Text="Android slider" Style="{ThemeResource SubtitleTextBlockStyle}" />
+       <ToggleSwitch x:Name="SliderEnabled" Header="Slider receiver" Toggled="onSliderEnabled" />
+       <ComboBox x:Name="SliderMode" Header="Connection" HorizontalAlignment="Stretch" SelectedIndex="0">
+        <ComboBoxItem Content="USB" /><ComboBoxItem Content="Local network · TCP" /><ComboBoxItem Content="Local network · UDP" />
+       </ComboBox>
+       <NumberBox x:Name="SliderPort" Header="Port" Minimum="1" Maximum="65535" Value="52468" />
+       <Button Content="Apply connection" Click="onSliderApply" HorizontalAlignment="Stretch" />
+       <TextBox x:Name="SliderAdb" Header="ADB location" PlaceholderText="Detect automatically" />
+       <ComboBox x:Name="SliderDevices" Header="Android tablet" HorizontalAlignment="Stretch" />
+       <Button Content="Find tablets" Click="onSliderScan" HorizontalAlignment="Stretch" />
+       <Button Content="Connect over USB" Click="onSliderConnect" HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}" />
+       <TextBlock x:Name="SliderStatus" Text="Off" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
       </StackPanel>
       <StackPanel x:Name="SettingsPage" Spacing="16" Visibility="Collapsed">
        <TextBlock Text="Settings" Style="{ThemeResource SubtitleTextBlockStyle}" />
