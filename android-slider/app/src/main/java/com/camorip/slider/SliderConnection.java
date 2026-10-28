@@ -2,13 +2,20 @@ package com.camorip.slider;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.net.Socket;
+import java.io.InputStream;
+import java.io.Closeable;
 import java.util.Arrays;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.function.Supplier;
 
 final class SliderConnection implements AutoCloseable {
+    interface Link extends Closeable {
+        void connect(int port) throws IOException;
+        InputStream input() throws IOException;
+        OutputStream output() throws IOException;
+        boolean closed();
+    }
     interface Observer {
         void status(String text, boolean connected);
         void leds(byte[] rgb);
@@ -17,10 +24,11 @@ final class SliderConnection implements AutoCloseable {
     private final int port;
     private final int frequency;
     private final Observer observer;
-    private final InputQueue queue = new InputQueue();
+    private final InputQueue queue;
+    private final Supplier<Link> linkFactory;
     private final Timer watchdog = new Timer("slider-watchdog", true);
     private volatile boolean running = true;
-    private volatile Socket socket;
+    private volatile Link socket;
     private volatile long writeStarted;
     private final Object ackLock = new Object();
     private final int[] sequences = new int[64];
@@ -31,11 +39,17 @@ final class SliderConnection implements AutoCloseable {
     private final Thread worker;
 
     SliderConnection(int port, int frequency, Observer observer) {
+        this(port, frequency, observer, AdbLink::new, new InputQueue());
+    }
+
+    SliderConnection(int port, int frequency, Observer observer, Supplier<Link> linkFactory, InputQueue queue) {
         if (port < 1 || port > 65535 || frequency < 50 || frequency > 1000)
             throw new IllegalArgumentException("Invalid connection settings");
         this.port = port;
         this.frequency = frequency;
         this.observer = observer;
+        this.linkFactory = linkFactory;
+        this.queue = queue;
         worker = new Thread(this::run, "slider-send");
         worker.setDaemon(true);
     }
@@ -60,22 +74,19 @@ final class SliderConnection implements AutoCloseable {
     private void run() {
         int sequence = 1;
         while (running) {
-            Socket current = new Socket();
+            Link current = linkFactory.get();
             socket = current;
             try {
-                current.setTcpNoDelay(true);
-                current.setKeepAlive(true);
-                current.setSendBufferSize(1024);
-                current.connect(new InetSocketAddress("127.0.0.1", port), 1500);
+                current.connect(port);
                 roundTripMicros = -1;
-                OutputStream output = current.getOutputStream();
+                OutputStream output = current.output();
                 write(output, SliderProtocol.input(0, sequence++));
                 queue.connect();
                 observer.status("USB connected", true);
                 Thread reader = new Thread(() -> receive(current), "slider-leds");
                 reader.setDaemon(true);
                 reader.start();
-                while (running && !current.isClosed()) {
+                while (running && !current.closed()) {
                     long mask = queue.next(1_000_000_000L / frequency);
                     write(output, SliderProtocol.input(mask, sequence++));
                     sentMask = mask;
@@ -107,10 +118,10 @@ final class SliderConnection implements AutoCloseable {
         finally { writeStarted = 0; }
     }
 
-    private void receive(Socket current) {
+    private void receive(Link current) {
         try {
             while (running && socket == current) {
-                byte[] frame = SliderProtocol.readFrame(current.getInputStream());
+                byte[] frame = SliderProtocol.readFrame(current.input());
                 if (frame.length == 100 && frame[1] == 'L' && frame[2] == 'E' && frame[3] == 'D' && socket == current)
                     observer.leds(Arrays.copyOfRange(frame, 4, 100));
                 else if (frame.length == 8 && frame[1] == 'A' && frame[2] == 'C' && frame[3] == 'K') {
@@ -124,7 +135,7 @@ final class SliderConnection implements AutoCloseable {
         } catch (IOException error) { closeSocket(current); }
     }
 
-    private static void closeSocket(Socket socket) {
+    private static void closeSocket(Link socket) {
         if (socket != null) try { socket.close(); } catch (IOException ignored) { }
     }
 

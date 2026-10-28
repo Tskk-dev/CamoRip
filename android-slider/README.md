@@ -15,7 +15,7 @@ Installs separately from Chuniboard and Rustnithm. Android 8.0 or newer.
 2. Install `app-debug.apk` from the Android workflow artifact.
 3. Start the game using the Brokenithm-Evolved input DLL.
 4. Run `CamoRip.SliderBridge.exe` from the Windows bridge artifact.
-5. Run `adb reverse tcp:52468 tcp:52468` on the PC.
+5. Run `adb reverse localabstract:camorip-slider-52468 tcp:52468` on the PC.
 6. Open CamoRip Slider and tap **Connect USB**.
 
 Stop other slider servers first. Leave CamoRip AIR running. The bridge binds to
@@ -28,7 +28,8 @@ The heartbeat setting does not change the tablet's hardware touch sampling rate.
 Touch changes bypass the heartbeat wait. Pending changes older than 20 ms cause
 a reconnect instead of delayed playback. The PC ACK display measures round-trip
 delivery to the bridge, not physical finger-to-game latency.
-If you change the port, pass it to the bridge and change both sides of `adb reverse`.
+The Android endpoint uses a local socket to avoid an extra TCP connection on the tablet.
+If you change the port, pass it to the bridge and change the number on both sides of `adb reverse`.
 USB reconnection or an ADB restart may require running `adb reverse` again.
 
 ## Builds and tests
@@ -49,7 +50,7 @@ queued transitions, fragmented TCP packets, LED feedback and AIR isolation.
 Physical touch latency and game compatibility still require testing.
 
 For an isolated USB transport benchmark, run the bridge with `--benchmark`, then
-`adb reverse tcp:62468 tcp:62468`. With the test APK installed, run:
+`adb reverse localabstract:camorip-slider-62468 tcp:62468`. With the test APK installed, run:
 
 ```sh
 adb shell am instrument -w -e class com.camorip.slider.SliderLatencyTest -e benchmark true com.camorip.slider.test/androidx.test.runner.AndroidJUnitRunner

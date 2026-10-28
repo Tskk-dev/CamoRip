@@ -120,8 +120,8 @@ public final class MainActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20), 0, dp(20), 0);
         TextView help = new TextView(this);
-        help.setText("Start CamoRip.SliderBridge.exe on PC, then run:\nadb reverse tcp:52468 tcp:52468\n\n" +
-            "The tablet connects to localhost. AIR stays on CamoRip. Touch changes send immediately; the rate below controls unchanged-state heartbeats.");
+        help.setText("Start CamoRip.SliderBridge.exe on PC, then run:\nadb reverse localabstract:camorip-slider-52468 tcp:52468\n\n" +
+            "AIR stays on CamoRip. Touch changes send immediately; the rate below controls unchanged-state heartbeats.");
         form.addView(help);
         Spinner layout = choices(form, "Sensor layout", new String[] { "32 columns", "16 columns × 2 rows" }, slider.columns == 32 ? 0 : 1);
         int[] rates = { 60, 120, 240, 500, 1000 };

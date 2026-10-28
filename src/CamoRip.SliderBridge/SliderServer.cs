@@ -26,6 +26,9 @@ public sealed class SliderServer(SliderMemory memory, int port)
     public async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
         client.NoDelay = true;
+        // ADB's local TCP peer can stall small writes while waiting for an ACK.
+        try { client.Client.IOControl(unchecked((int)0x98000017), BitConverter.GetBytes(1), null); }
+        catch (SocketException error) { Status?.Invoke($"Immediate TCP acknowledgements unavailable: {error.SocketErrorCode}"); }
         using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var stream = client.GetStream();
         Status?.Invoke("Tablet connected; waiting for slider input.");

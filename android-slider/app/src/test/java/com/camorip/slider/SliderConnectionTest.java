@@ -17,7 +17,17 @@ public class SliderConnectionTest {
             SliderConnection client = new SliderConnection(server.getLocalPort(), 240, new SliderConnection.Observer() {
                 @Override public void status(String text, boolean ready) { if (ready) connected.countDown(); }
                 @Override public void leds(byte[] rgb) { receivedLeds.set(rgb); leds.countDown(); }
-            });
+            }, () -> new SliderConnection.Link() {
+                private final Socket socket = new Socket();
+                @Override public void connect(int port) throws java.io.IOException {
+                    socket.setTcpNoDelay(true);
+                    socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 3000);
+                }
+                @Override public java.io.InputStream input() throws java.io.IOException { return socket.getInputStream(); }
+                @Override public java.io.OutputStream output() throws java.io.IOException { return socket.getOutputStream(); }
+                @Override public boolean closed() { return socket.isClosed(); }
+                @Override public void close() throws java.io.IOException { socket.close(); }
+            }, new InputQueue(() -> 0));
             try {
                 client.start();
                 server.setSoTimeout(3000);

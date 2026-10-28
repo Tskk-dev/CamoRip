@@ -30,6 +30,10 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: camorip-slider-debug-signing-v1
       - name: Build and test APK
         working-directory: android-slider
         run: |

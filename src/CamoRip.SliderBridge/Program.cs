@@ -11,7 +11,7 @@ int port = benchmark ? 62468 : args.Length == 1 ? int.Parse(args[0]) : 52468;
 using var stop = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
 Console.WriteLine($"CamoRip Slider · localhost:{port}");
-Console.WriteLine($"Run: adb reverse tcp:{port} tcp:{port}");
+Console.WriteLine($"Run: adb reverse localabstract:camorip-slider-{port} tcp:{port}");
 Console.WriteLine("Start the game with Brokenithm-Evolved. AIR remains controlled by CamoRip.");
 try
 {
