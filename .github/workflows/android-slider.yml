@@ -1,0 +1,52 @@
+name: Build CamoRip Slider
+
+on:
+  pull_request:
+    paths:
+      - 'android-slider/**'
+      - 'src/CamoRip.SliderBridge/**'
+      - 'tests/CamoRip.SliderBridge.Tests/**'
+      - '.github/workflows/android-slider.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slider-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: camorip-slider-debug-signing-v1
+      - name: Build APK and lint
+        working-directory: android-slider
+        run: |
+          chmod +x gradlew
+          ./gradlew lintDebug assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: camorip-slider-android-debug
+          path: android-slider/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camorip-slider-android-build-reports
+          path: |
+            android-slider/app/build/reports/

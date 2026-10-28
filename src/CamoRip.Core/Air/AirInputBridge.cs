@@ -80,13 +80,13 @@ public sealed class AirInputBridge : IDisposable
             var bytes = BeamBytes(value);
             view.WriteArray(0, bytes, 0, bytes.Length);
             StatusChanged?.Invoke(this, updated != 0 && Environment.TickCount64 - updated >= 500
-                ? "AIR paused: phone updates timed out; all zones released."
-                : $"AIR zones (top to bottom): {string.Concat(Enumerable.Range(0, 6).Select(zone => (value >> zone) & 1))} · Brokenithm connected");
+                ? "Input paused"
+                : "Connected");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             close();
-            StatusChanged?.Invoke(this, "Waiting for Brokenithm shared buffer. Start the game and its input DLL.");
+            StatusChanged?.Invoke(this, "Waiting for game");
         }
     }
 

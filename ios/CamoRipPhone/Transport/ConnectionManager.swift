@@ -38,6 +38,10 @@ final class ConnectionManager: ObservableObject {
     private var bitrate = 8_000_000
     private var pingTimer: Timer?
     private var metricsTimer: Timer?
+    private var captureStatsTimer: Timer?
+    private var captureBaseline: (frames: Int, dropped: Int, time: Double)?
+    private var captureMode: CaptureConfiguration?
+    private var captureActive = false
     private let streamingLock = NSLock()
     private var streamingForCapture = false
     private var lastPong = Date()
@@ -86,6 +90,7 @@ final class ConnectionManager: ObservableObject {
     deinit {
         pingTimer?.invalidate()
         metricsTimer?.invalidate()
+        captureStatsTimer?.invalidate()
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     }
 
@@ -131,6 +136,7 @@ final class ConnectionManager: ObservableObject {
             return
         }
         cameraSession?.start()
+        captureBaseline = nil
         encoder.requestKeyframe()
         streamingLock.lock(); streamingForCapture = true; streamingLock.unlock()
         setIdleTimerDisabled(true)
@@ -142,6 +148,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     func stopStreaming(notifyPeer: Bool = true) {
+        captureBaseline = nil
         if airConfiguration.enabled { configureAir(AirConfiguration()) }
         cameraSession?.turnTorchOff()
         startRequested = false
@@ -229,6 +236,7 @@ final class ConnectionManager: ObservableObject {
             self.state = .connected
             // Windows initiates the existing welcome -> hello -> configure handshake.
             startHeartbeat()
+            startCaptureStats()
         case .disconnected:
             resetSession()
             activeTransport = nil
@@ -243,6 +251,10 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func resetSession() {
+        captureStatsTimer?.invalidate()
+        captureStatsTimer = nil
+        captureBaseline = nil
+        captureMode = nil
         configureAir(AirConfiguration())
         cameraSession?.turnTorchOff()
         handshakeGeneration += 1
@@ -281,7 +293,7 @@ final class ConnectionManager: ObservableObject {
             }
             configureAir(settings)
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "air_zones_v1", "air_preview_v1", "air_zone_width_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "air_zones_v1", "air_preview_v1", "air_zone_width_v1", "capture_stats_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
@@ -368,6 +380,7 @@ final class ConnectionManager: ObservableObject {
                 return
             }
             self.formatLabel = "\(config.width) × \(config.height) · \(config.fps) fps"
+            self.captureBaseline = nil
             DiagnosticLog.write("Capture and encoder ready: \(config.width)x\(config.height) @ \(config.fps) fps")
             completion()
         }
@@ -379,6 +392,7 @@ final class ConnectionManager: ObservableObject {
         let wasHighRate = airConfiguration.enabled && !airConfiguration.preview
         let highRate = settings.enabled && !settings.preview
         let changeCapture = wasHighRate != highRate || airCapturePending
+        if changeCapture { captureBaseline = nil }
         airCaptureRevision += 1
         let revision = airCaptureRevision
         airConfiguration = settings
@@ -406,6 +420,7 @@ final class ConnectionManager: ObservableObject {
             if !highRate { self.airVideoConfiguration = nil }
             switch result {
             case .success(let actual):
+                self.captureBaseline = nil
                 self.airMask = self.airDetector.configure(settings)
                 self.formatLabel = "\(actual.width) × \(actual.height) · \(actual.fps) fps"
                 DiagnosticLog.write("AIR capture: \(actual.resolution) @ \(actual.fps) fps; preview=\(previewing)")
@@ -436,6 +451,28 @@ final class ConnectionManager: ObservableObject {
                 " thermal=\(StreamingScreenDimmer.thermalName(ProcessInfo.processInfo.thermalState))" +
                 " brightness=\(String(format: "%.2f", Double(UIScreen.main.brightness)))")
         }
+    }
+
+    private func startCaptureStats() {
+        guard enableTimers else { return }
+        captureStatsTimer?.invalidate()
+        captureBaseline = nil
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, self.activeTransport != nil else { return }
+            let sample = DiagnosticLog.captureSnapshot()
+            let mode = self.cameraSession?.configuration
+            let active = (self.airConfiguration.enabled || self.state == .streaming) && !self.configuring && !self.airCapturePending
+            defer { self.captureBaseline = sample; self.captureMode = mode; self.captureActive = active }
+            guard let previous = self.captureBaseline, let mode, mode == self.captureMode,
+                  active == self.captureActive else { return }
+            let seconds = sample.time - previous.time
+            guard seconds >= 0.05 && seconds <= 30 else { return }
+            self.transport.sendControl(.captureStats(CaptureStats(configuredFPS: Int(mode.fps), resolution: mode.resolution,
+                capturedFrames: sample.frames - previous.frames, droppedFrames: sample.dropped - previous.dropped,
+                sampleSeconds: seconds, active: active)))
+        }
+        captureStatsTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func sendCameraState() {
@@ -479,6 +516,7 @@ final class ConnectionManager: ObservableObject {
 // MARK: - Control Message Types
 
 enum ControlMessage: Codable {
+    case captureStats(CaptureStats)
     case airConfigure(AirConfiguration)
     case airState(mask: Int, enabled: Bool)
     case hello(deviceName: String, capabilities: [String])
@@ -511,6 +549,7 @@ enum ControlMessage: Codable {
 
     var type: String {
         switch self {
+        case .captureStats: return "capture_stats"
         case .airConfigure: return "air_configure"
         case .airState: return "air_state"
         case .getCameraState:      return "get_camera_state"
@@ -540,6 +579,7 @@ enum ControlMessage: Codable {
         try container.encode(type, forKey: .type)
 
         switch self {
+        case .captureStats(let stats): try stats.encode(to: encoder)
         case .airConfigure(let configuration): try configuration.encode(to: encoder)
         case .airState(let mask, let enabled):
             try container.encode(mask, forKey: .mask)
@@ -591,6 +631,7 @@ enum ControlMessage: Codable {
         switch type {
         case "air_configure": self = .airConfigure(try AirConfiguration(from: decoder))
         case "air_state": self = .airState(mask: try container.decode(Int.self, forKey: .mask), enabled: try container.decode(Bool.self, forKey: .enabled))
+        case "capture_stats": self = .captureStats(try CaptureStats(from: decoder))
         case "get_camera_state": self = .getCameraState
         case "camera_settings": self = .cameraSettings(try CameraControlRequest(from: decoder))
         case "camera_state": self = .cameraState(try CameraControlState(from: decoder))

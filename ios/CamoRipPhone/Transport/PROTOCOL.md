@@ -5,6 +5,21 @@ Windows connects through Apple's usbmux service to the iPhone loopback listener
 in [the wireless guide](../../../docs/WIRELESS.md). Both transports carry the same
 video and control protocol. No audio or external server is used.
 
+## Capture statistics
+
+Phones advertising `capture_stats_v1` send `capture_stats` about once per second:
+
+```json
+{"type":"capture_stats","configured_fps":240,"resolution":"1280x720","captured_frames":239,"dropped_frames":1,"sample_seconds":1.002,"active":true}
+```
+
+Delivered FPS is `captured_frames / sample_seconds`. Counts come from AVFoundation
+output callbacks, independently of logging resets, encoding, preview and AIR state
+messages. The elapsed interval uses the phone's monotonic clock. Mode changes reset
+the sampling window. Windows clears readings after three seconds without a report.
+`active` indicates AIR detection or video streaming; idle reports are not displayed
+as an active capture rate.
+
 ## Framing
 
 Control messages: byte `0x00`, UTF-8 JSON object, byte `0x0A` newline. The receiver
