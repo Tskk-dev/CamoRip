@@ -11,7 +11,6 @@ internal sealed class SliderReceiver : IAsyncDisposable
     private SliderMemory? memory;
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     public event Action<string>? Changed;
-    public bool Running => listener is { IsCompleted: false };
 
     public async Task StartAsync()
     {
@@ -60,8 +59,11 @@ internal sealed class SliderReceiver : IAsyncDisposable
             .Select(line => line.Split('\t')[0]).ToArray();
     }
 
-    public static Task<string> ConnectUsbAsync(string executable, string serial, int port)
-        => adb(executable, "-s", serial, "reverse", $"localabstract:camorip-slider-{port}", $"tcp:{port}");
+    public static async Task ConnectUsbAsync(string executable, string serial, int port)
+    {
+        await adb(executable, "-s", serial, "reverse", $"localabstract:camorip-slider-{port}", $"tcp:{port}");
+        await adb(executable, "-s", serial, "reverse", $"tcp:{port}", $"tcp:{port}");
+    }
 
     private static async Task<string> adb(string executable, params string[] arguments)
     {

@@ -6,10 +6,13 @@ import org.json.JSONException;
 import java.util.Map;
 
 final class SliderConfig {
-    static final Map<String, int[]> RANGES = Map.of(
-        "port", new int[] {1, 65535}, "frequency", new int[] {50, 1000},
-        "sensitivity", new int[] {0, 50}, "area", new int[] {30, 100},
-        "ledBrightness", new int[] {0, 100}, "backgroundOpacity", new int[] {0, 100}, "ledPattern", new int[] {0, 2});
+    static final Map<String, int[]> RANGES = new java.util.LinkedHashMap<>();
+    static {
+        RANGES.put("port", new int[] {1, 65535}); RANGES.put("frequency", new int[] {50, 1000});
+        RANGES.put("sensitivity", new int[] {0, 50}); RANGES.put("area", new int[] {30, 100});
+        RANGES.put("ledBrightness", new int[] {0, 100}); RANGES.put("backgroundOpacity", new int[] {0, 100});
+        RANGES.put("ledPattern", new int[] {0, 2});
+    }
     static final String[] FLAGS = {"grid", "diagnostics", "leds", "haptics", "dynamic", "expressive", "autoConnect", "mirror", "swapRows"};
 
     static JSONObject export(SharedPreferences preferences) throws JSONException {
@@ -43,9 +46,9 @@ final class SliderConfig {
         for (String key : new String[] {"mode", "host", "theme", "language"}) {
             if (!json.has(key)) continue;
             String value = json.getString(key);
-            if (key.equals("mode") && !java.util.Set.of("usb", "tcp", "udp").contains(value)) throw new JSONException("Invalid connection");
-            if (key.equals("theme") && !java.util.Set.of("system", "dark", "light").contains(value)) throw new JSONException("Invalid theme");
-            if (key.equals("language") && !java.util.Set.of("", "en", "zh-CN", "zh-TW", "ja", "ko", "fr").contains(value)) throw new JSONException("Invalid language");
+            if (key.equals("mode") && !java.util.Arrays.asList("usb", "tcp", "udp").contains(value)) throw new JSONException("Invalid connection");
+            if (key.equals("theme") && !java.util.Arrays.asList("system", "dark", "light").contains(value)) throw new JSONException("Invalid theme");
+            if (key.equals("language") && !java.util.Arrays.asList("", "en", "zh-CN", "zh-TW", "ja", "ko", "fr").contains(value)) throw new JSONException("Invalid language");
             if (key.equals("host") && (value.isEmpty() || value.length() > 253 || !value.matches("[a-zA-Z0-9.:-]+"))) throw new JSONException("Invalid PC address");
             edit.putString(key, value);
         }

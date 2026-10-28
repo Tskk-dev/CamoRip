@@ -1,6 +1,6 @@
 # CamoRip Slider
 
-Android USB touch controller for Chunithm, built for use alongside CamoRip AIR.
+Android touch controller for Chunithm, built for use alongside CamoRip AIR.
 Installs separately from Chuniboard and Rustnithm. Android 8.0 or newer.
 
 - 32 horizontal sensors or a 16-column, two-row layout.
@@ -8,20 +8,27 @@ Installs separately from Chuniboard and Rustnithm. Android 8.0 or newer.
 - Immediate input changes, configurable heartbeat rate, automatic reconnect.
 - Game LED feedback, sensor grid, touch diagnostics and optional haptics.
 - Slider-only packets. CamoRip keeps control of AIR.
+- Material 3 Expressive, system/light/dark themes, dynamic colors and accent presets.
+- Background images, JSON skin import/export, preset LEDs and language selection.
+- Card access code, coin, service and test controls. No AIR modes in the Android app.
 
 ## Connect over USB
 
 1. Enable USB debugging on the tablet and authorize this PC.
 2. Install `app-debug.apk` from the Android workflow artifact.
 3. Start the game using the Brokenithm-Evolved input DLL.
-4. Run `CamoRip.SliderBridge.exe` from the Windows bridge artifact.
-5. Run `adb reverse localabstract:camorip-slider-52468 tcp:52468` on the PC.
-6. Open CamoRip Slider and tap **Connect USB**.
+4. Open **Android slider** in CamoRip AIR on the PC.
+5. Click **Find tablets**, select the Redmi and click **Connect over USB**.
+6. Open CamoRip Slider and tap **Connect**.
 
-Stop other slider servers first. Leave CamoRip AIR running. The bridge binds to
-localhost and writes only the 32 slider bytes in `Local\BROKENITHM_SHARED_BUFFER`.
-It releases slider input on disconnect or after 500 ms without a complete packet.
-Use Ctrl+C to close the bridge cleanly.
+Stop other slider servers first. The receiver runs inside CamoRip, including in the
+system tray. USB binds only to localhost. Slider and optional game-button writes
+leave the six AIR bytes alone. Input releases on disconnect or after 500 ms without
+a complete packet. The old standalone bridge remains available as a CLI fallback.
+
+For local-network play, choose TCP or UDP on the PC and tablet, enter the PC address
+shown in CamoRip and use the same port. Windows Firewall must allow the selected port
+on your private network. The USB mode needs no inbound LAN access.
 
 Settings control layout, sensitivity, play area, heartbeat rate, port and visuals.
 The heartbeat setting does not change the tablet's hardware touch sampling rate.
@@ -31,6 +38,10 @@ delivery to the bridge, not physical finger-to-game latency.
 The Android endpoint uses a local socket to avoid an extra TCP connection on the tablet.
 If you change the port, pass it to the bridge and change the number on both sides of `adb reverse`.
 USB reconnection or an ADB restart may require running `adb reverse` again.
+The PC's **Connect over USB** button does this for you.
+The app respects the tablet's display refresh rate. **Hide** removes the control bar;
+press Back to restore it when using a full-height play area.
+JSON skins use CamoRip's settings format and do not include your card code or image file.
 
 ## Builds and tests
 
@@ -41,6 +52,8 @@ Use JDK 17 and Android SDK 35:
 ./gradlew connectedDebugAndroidTest
 ```
 
+The current workflow builds the APK, runs lint, and builds the Windows installer.
+Automated and device tests are paused at the user's request.
 The workflow produces a signed debug APK for testing, not a Play Store release.
 CI debug signing keys can change between runs; if an update reports an incompatible
 signature, uninstall the previous CamoRip Slider test build first. This clears its settings.

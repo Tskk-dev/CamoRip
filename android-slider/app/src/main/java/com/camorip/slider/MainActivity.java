@@ -68,7 +68,7 @@ public final class MainActivity extends AppCompatActivity {
         bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         connect = button("Connect", () -> { requested = !requested; restart(); }); bar.addView(connect);
         bar.addView(button("Settings", () -> { slider.release(); new SettingsSheet(this).show(); }));
-        bar.addView(button("Hide", () -> { chrome.setVisibility(View.GONE); restore.setVisibility(View.VISIBLE); }));
+        bar.addView(button("Hide", () -> { chrome.setVisibility(View.GONE); restore.setVisibility(slider.areaPercent < 100 ? View.VISIBLE : View.GONE); }));
         chrome.addView(bar);
         FrameLayout.LayoutParams header = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
         header.setMargins(dp(16), dp(12), dp(16), 0); root.addView(chrome, header);
@@ -76,6 +76,12 @@ public final class MainActivity extends AppCompatActivity {
         FrameLayout.LayoutParams handle = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
         handle.setMargins(0, dp(8), dp(16), 0); root.addView(restore, handle); restore.setVisibility(View.GONE);
         setContentView(root);
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (chrome.getVisibility() == View.GONE) { chrome.setVisibility(View.VISIBLE); restore.setVisibility(View.GONE); }
+                else finish();
+            }
+        });
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
             androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); return insets;

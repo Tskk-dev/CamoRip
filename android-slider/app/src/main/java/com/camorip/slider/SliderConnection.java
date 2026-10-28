@@ -104,7 +104,7 @@ final class SliderConnection implements AutoCloseable {
                     sentMask = mask;
                     packetsSent++;
                 }
-            } catch (IOException error) {
+            } catch (IOException | IllegalArgumentException error) {
                 if (running) observer.status("Waiting for PC / adb reverse: " + error.getMessage(), false);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();

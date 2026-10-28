@@ -429,6 +429,7 @@ public sealed partial class MainWindow : Window
         SettingsPage.Visibility = selected == "settings" ? Visibility.Visible : Visibility.Collapsed;
         AirPage.Visibility = selected == "air" ? Visibility.Visible : Visibility.Collapsed;
         SliderPage.Visibility = selected == "slider" ? Visibility.Visible : Visibility.Collapsed;
+        ControlStatus.Visibility = selected is "slider" or "air" ? Visibility.Collapsed : Visibility.Visible;
     }
     private async void onSliderEnabled(object sender, RoutedEventArgs e)
     {
