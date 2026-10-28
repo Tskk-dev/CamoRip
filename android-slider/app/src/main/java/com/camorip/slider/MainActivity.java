@@ -116,7 +116,9 @@ public final class MainActivity extends AppCompatActivity {
                 @Override public void status(String text, boolean ready) {
                     runOnUiThread(() -> {
                         if (generation != connectionGeneration || !requested || !foreground) return;
-                        connected = ready; connectionStatus = ready ? "Connected" : "Waiting for PC"; slider.release();
+                        connected = ready;
+                        connectionStatus = ready ? "Connected" : preferences.getBoolean("diagnostics", false) ? text : "Waiting for PC";
+                        slider.release();
                     });
                 }
                 @Override public void leds(byte[] rgb) {

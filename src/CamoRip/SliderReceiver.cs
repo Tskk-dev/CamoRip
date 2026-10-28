@@ -70,6 +70,7 @@ internal sealed class SliderReceiver : IAsyncDisposable
 
     private static async Task<string> adb(string executable, params string[] arguments)
     {
+        executable = executable.Trim().Trim('"');
         if (string.IsNullOrWhiteSpace(executable))
         {
             string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Android", "platform-tools", "adb.exe");

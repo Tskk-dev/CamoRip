@@ -105,6 +105,7 @@ final class SliderConnection implements AutoCloseable {
                     packetsSent++;
                 }
             } catch (IOException | IllegalArgumentException error) {
+                android.util.Log.w("CamoRipSlider", "Controller connection failed", error);
                 if (running) observer.status("Waiting for PC / adb reverse: " + error.getMessage(), false);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
