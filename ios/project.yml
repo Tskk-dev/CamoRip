@@ -39,7 +39,7 @@ targets:
       properties:
         CFBundleName: CamoRip
         CFBundleDisplayName: CamoRip
-        CFBundleVersion: "9"
+        CFBundleVersion: "10"
         CFBundleShortVersionString: "0.4.0"
         UILaunchStoryboardName: ""
         UIApplicationSceneManifest:

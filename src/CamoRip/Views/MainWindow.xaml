@@ -68,6 +68,8 @@
       </StackPanel>
       <StackPanel x:Name="AirPage" Spacing="16" Visibility="Collapsed">
        <TextBlock Text="Chunithm AIR" Style="{ThemeResource SubtitleTextBlockStyle}" />
+       <TextBlock x:Name="AirCaptureRate" Text="Actual capture: —" FontSize="20" FontWeight="SemiBold" />
+       <TextBlock x:Name="AirCaptureDetails" Text="Connect iPhone" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
        <TextBlock Text="Aim the iPhone at a plain background. Position your six zones, clear your hands, then calibrate. AIR mode sends inputs without encoding video." TextWrapping="Wrap" />
        <ToggleSwitch x:Name="AirEnabled" Header="Send AIR inputs to Brokenithm" Toggled="onAirEnabled" IsEnabled="False" />
        <ToggleSwitch x:Name="AirCalibrationPreview" Header="Live calibration preview on PC" IsOn="True" Toggled="onAirPreview" />

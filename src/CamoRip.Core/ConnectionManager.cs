@@ -7,6 +7,8 @@ namespace CamoRip.Core;
 public sealed class ConnectionManager : IAsyncDisposable
 {
     public event EventHandler<AirState>? AirStateReceived;
+    public event EventHandler<CaptureStats>? CaptureStatsReceived;
+    public bool SupportsCaptureStats { get; private set; }
     public bool SupportsAir { get; private set; }
     public bool SupportsAirPreview { get; private set; }
     public bool SupportsAirZoneWidth { get; private set; }
@@ -143,6 +145,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             SupportsAir = false;
             SupportsAirPreview = false;
             SupportsAirZoneWidth = false;
+            SupportsCaptureStats = false;
             SupportsBitrateControl = false;
             _configurationPending = false;
             _startAfterConfigure = false;
@@ -181,6 +184,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             SupportsAir = hello.Capabilities.Contains("air_zones_v1");
             SupportsAirPreview = hello.Capabilities.Contains("air_preview_v1");
             SupportsAirZoneWidth = hello.Capabilities.Contains("air_zone_width_v1");
+            SupportsCaptureStats = hello.Capabilities.Contains("capture_stats_v1");
             SupportsBitrateControl = hello.Capabilities.Contains("bitrate_control_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
@@ -196,6 +200,9 @@ public sealed class ConnectionManager : IAsyncDisposable
         {
             case AirState air when air.Mask is >= 0 and <= 63:
                 AirStateReceived?.Invoke(this, air);
+                break;
+            case CaptureStats stats when stats.IsValid:
+                CaptureStatsReceived?.Invoke(this, stats);
                 break;
             case CameraState cameraState:
                 CameraStateReceived?.Invoke(this, cameraState);

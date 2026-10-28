@@ -4,6 +4,8 @@
 
 This branch adds a Chunithm AIR controller. Mainline CamoRip stays separate.
 
+**Chunithm AIR → Actual capture** shows delivered camera FPS, the configured rate and dropped frames. It updates about once per second and works with video preview off. Update both the PC app and iPhone IPA for this readout.
+
 The Android slider receiver is built into this branch's Windows app. Open **Android slider** to enable it, find your tablet and connect over USB. No separate bridge is needed. The [Android app](android-slider/README.md) also supports local-network TCP/UDP, skins and Material Expressive settings. AIR stays on the iPhone.
 
 1. Install this branch's Windows build and matching Legacy or Regular IPA.

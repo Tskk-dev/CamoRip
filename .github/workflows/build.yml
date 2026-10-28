@@ -53,7 +53,6 @@ jobs:
           if-no-files-found: ignore
 
   ios:
-    if: github.head_ref != 'feature/android-slider'
     name: iOS (${{ matrix.profile }})
     strategy:
       fail-fast: false
@@ -99,6 +98,7 @@ jobs:
           (cd artifacts/ipa && zip -qr ../${{ matrix.ipa }} Payload)
           unzip -t artifacts/${{ matrix.ipa }}
       - name: Check phone display lifecycle and video packet conversion
+        if: github.head_ref != 'feature/android-slider'
         working-directory: ios
         run: |
           set -euo pipefail

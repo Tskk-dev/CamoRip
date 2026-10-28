@@ -15,11 +15,21 @@ public sealed partial class MainWindow : Window
     private AirConfigure airSettings = new();
     private int airMask;
     private long airUpdateTicks;
+    private long captureStatsTicks;
+
+    private void resetCaptureStats()
+    {
+        captureStatsTicks = 0;
+        AirCaptureRate.Text = "Actual capture: —";
+        AirCaptureDetails.Text = !_service.Connected ? "Connect iPhone" :
+            _service.Connection.SupportsCaptureStats ? "Waiting for capture" : "Update iPhone app";
+    }
     private int airImageWidth = 1280, airImageHeight = 720;
 
     private async void onAirPreview(object sender, RoutedEventArgs e)
     {
         if (!_ready || _updating || !airRequested) return;
+        resetCaptureStats();
         await applyAir(previewOnly: true);
         Refresh();
     }
@@ -59,6 +69,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_ready || _updating) return;
         airRequested = AirEnabled.IsOn;
+        resetCaptureStats();
         if (!airRequested) airBridge.SetEnabled(false);
         await applyAir();
         Refresh();
@@ -188,7 +199,7 @@ public sealed partial class MainWindow : Window
             slider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _editingSliders.Remove(slider)), true);
             slider.PointerCaptureLost += (_, _) => _editingSliders.Remove(slider);
         }
-        _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(RefreshModes);
+        _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(() => { resetCaptureStats(); RefreshModes(); });
         var settings = App.Settings;
         SliderEnabled.IsOn = settings.SliderEnabled;
         SliderPort.Value = settings.SliderPort;
@@ -230,6 +241,13 @@ public sealed partial class MainWindow : Window
         };
         _service.Connection.Failure += (_, message) => App.Ui(() => { ConnectionNotice.Message = message; ConnectionNotice.IsOpen = true; });
         _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
+        _service.Connection.CaptureStatsReceived += (_, stats) => App.Ui(() =>
+        {
+            captureStatsTicks = Stopwatch.GetTimestamp();
+            AirCaptureRate.Text = stats.Active ? $"Actual capture: {stats.ActualFps:F1} fps" : "Actual capture: —";
+            AirCaptureDetails.Text = stats.Active ?
+                $"{stats.Resolution} · configured {stats.ConfiguredFps} fps · {stats.DroppedFrames} capture drops / {stats.SampleSeconds:F1}s" : "Not streaming";
+        });
         airBridge.StatusChanged += (_, status) => App.Ui(() => AirStatus.Text = status);
         _service.Connection.AirStateReceived += (_, state) =>
         {
@@ -245,6 +263,7 @@ public sealed partial class MainWindow : Window
         };
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
+            resetCaptureStats();
             _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
             if (state == TransportState.Connected) ConnectionNotice.IsOpen = false;
             else
@@ -263,7 +282,12 @@ public sealed partial class MainWindow : Window
         });
         _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = false; });
         _commands = DispatcherQueue.CreateTimer(); _commands.Interval = TimeSpan.FromMilliseconds(50);
-        _commands.Tick += async (_, _) => await FlushCommands(); _commands.Start();
+        _commands.Tick += async (_, _) =>
+        {
+            if (captureStatsTicks != 0 && Stopwatch.GetElapsedTime(captureStatsTicks).TotalSeconds > 3) resetCaptureStats();
+            await FlushCommands();
+        };
+        _commands.Start();
         AppWindow.Closing += (_, e) =>
         {
             if (_exiting) return;

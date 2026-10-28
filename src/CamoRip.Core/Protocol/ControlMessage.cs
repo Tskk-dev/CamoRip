@@ -35,6 +35,7 @@ public abstract record ControlMessage
         {
             "air_configure" => doc.Deserialize<AirConfigure>(_options),
             "air_state" => doc.Deserialize<AirState>(_options),
+            "capture_stats" => doc.Deserialize<CaptureStats>(_options),
             "camera_state"      => doc.Deserialize<CameraState>(_options),
             "camera_settings"   => doc.Deserialize<CameraSettings>(_options),
             "get_camera_state"  => new GetCameraState(),
@@ -203,6 +204,20 @@ public sealed record AirState : ControlMessage
     public override string Type => "air_state";
     public int Mask { get; init; }
     public bool Enabled { get; init; }
+}
+public sealed record CaptureStats : ControlMessage
+{
+    public override string Type => "capture_stats";
+    public int ConfiguredFps { get; init; }
+    public string Resolution { get; init; } = "";
+    public int CapturedFrames { get; init; }
+    public int DroppedFrames { get; init; }
+    public double SampleSeconds { get; init; }
+    public bool Active { get; init; }
+    [JsonIgnore] public double ActualFps => CapturedFrames / SampleSeconds;
+    [JsonIgnore] public bool IsValid => ConfiguredFps is >= 1 and <= 1000 &&
+        Resolution is { Length: > 0 and <= 32 } && CapturedFrames is >= 0 and <= 100000 && DroppedFrames is >= 0 and <= 100000 &&
+        double.IsFinite(SampleSeconds) && SampleSeconds is >= 0.05 and <= 30 && double.IsFinite(ActualFps) && ActualFps <= 1000;
 }
 public sealed record CameraSettings : ControlMessage
 {
