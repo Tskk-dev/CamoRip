@@ -33,6 +33,15 @@ public final class MainActivity extends Activity {
         preferences = getSharedPreferences("slider", MODE_PRIVATE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().setSustainedPerformanceMode(true);
+        android.view.Display display = getWindowManager().getDefaultDisplay();
+        android.view.Display.Mode fastest = display.getMode();
+        for (android.view.Display.Mode mode : display.getSupportedModes()) {
+            if (mode.getPhysicalWidth() == fastest.getPhysicalWidth() && mode.getPhysicalHeight() == fastest.getPhysicalHeight() &&
+                mode.getRefreshRate() > fastest.getRefreshRate()) fastest = mode;
+        }
+        WindowManager.LayoutParams window = getWindow().getAttributes();
+        window.preferredDisplayModeId = fastest.getModeId();
+        getWindow().setAttributes(window);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         LinearLayout bar = new LinearLayout(this);
@@ -59,7 +68,7 @@ public final class MainActivity extends Activity {
                 if (isDestroyed()) return;
                 SliderConnection current = connection;
                 status.setText(connectionStatus + (current == null ? "" : " · TX " + current.packetsSent +
-                    " · " + String.format(java.util.Locale.ROOT, "%08X", current.sentMask)));
+                    " · PC ACK " + (current.roundTripMicros < 0 ? "--" : current.roundTripMicros / 1000.0 + " ms")));
                 getWindow().getDecorView().postDelayed(this, 250);
             }
         }, 250);

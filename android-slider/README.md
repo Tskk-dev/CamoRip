@@ -25,6 +25,9 @@ Use Ctrl+C to close the bridge cleanly.
 
 Settings control layout, sensitivity, play area, heartbeat rate, port and visuals.
 The heartbeat setting does not change the tablet's hardware touch sampling rate.
+Touch changes bypass the heartbeat wait. Pending changes older than 20 ms cause
+a reconnect instead of delayed playback. The PC ACK display measures round-trip
+delivery to the bridge, not physical finger-to-game latency.
 If you change the port, pass it to the bridge and change both sides of `adb reverse`.
 USB reconnection or an ADB restart may require running `adb reverse` again.
 
@@ -44,6 +47,15 @@ signature, uninstall the previous CamoRip Slider test build first. This clears i
 Tests cover simultaneous contacts, overlapping fingers, release order, cancellation,
 queued transitions, fragmented TCP packets, LED feedback and AIR isolation.
 Physical touch latency and game compatibility still require testing.
+
+For an isolated USB transport benchmark, run the bridge with `--benchmark`, then
+`adb reverse tcp:62468 tcp:62468`. With the test APK installed, run:
+
+```sh
+adb shell am instrument -w -e class com.camorip.slider.SliderLatencyTest -e benchmark true com.camorip.slider.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+This uses a separate memory mapping and cannot send inputs to the game.
 
 ## Feature references
 

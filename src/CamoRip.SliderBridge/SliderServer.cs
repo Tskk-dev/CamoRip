@@ -6,6 +6,7 @@ namespace CamoRip.SliderBridge;
 public sealed class SliderServer(SliderMemory memory, int port)
 {
     public event Action<string>? Status;
+    private readonly SemaphoreSlim writes = new(1, 1);
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -61,6 +62,8 @@ public sealed class SliderServer(SliderMemory memory, int port)
             deadline.CancelAfter(500);
             await stream.ReadExactlyAsync(packet, deadline.Token);
             bool applied = memory.Apply(packet);
+            byte[] ack = [7, (byte)'A', (byte)'C', (byte)'K', packet[4], packet[5], packet[6], packet[7]];
+            await send(stream, ack, cancellationToken);
             frames++;
             if (ready != applied || Environment.TickCount64 >= nextReport)
             {
@@ -75,10 +78,17 @@ public sealed class SliderServer(SliderMemory memory, int port)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(500);
-            await stream.WriteAsync(memory.LedFrame(), deadline.Token);
+            await send(stream, memory.LedFrame(), cancellationToken);
             await Task.Delay(33, cancellationToken);
         }
+    }
+
+    private async Task send(NetworkStream stream, byte[] packet, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(500);
+        await writes.WaitAsync(deadline.Token);
+        try { await stream.WriteAsync(packet, deadline.Token); }
+        finally { writes.Release(); }
     }
 }

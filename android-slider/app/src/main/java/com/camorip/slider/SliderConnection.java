@@ -22,6 +22,10 @@ final class SliderConnection implements AutoCloseable {
     private volatile boolean running = true;
     private volatile Socket socket;
     private volatile long writeStarted;
+    private final Object ackLock = new Object();
+    private final int[] sequences = new int[64];
+    private final long[] sentAt = new long[64];
+    volatile long roundTripMicros = -1;
     volatile long packetsSent;
     volatile long sentMask;
     private final Thread worker;
@@ -40,9 +44,9 @@ final class SliderConnection implements AutoCloseable {
         watchdog.scheduleAtFixedRate(new TimerTask() {
             @Override public void run() {
                 long started = writeStarted;
-                if (started != 0 && System.nanoTime() - started > 500_000_000L) closeSocket(socket);
+                if (started != 0 && System.nanoTime() - started > 50_000_000L) closeSocket(socket);
             }
-        }, 100, 100);
+        }, 10, 10);
         worker.start();
     }
 
@@ -61,8 +65,9 @@ final class SliderConnection implements AutoCloseable {
             try {
                 current.setTcpNoDelay(true);
                 current.setKeepAlive(true);
-                current.setSendBufferSize(4096);
+                current.setSendBufferSize(1024);
                 current.connect(new InetSocketAddress("127.0.0.1", port), 1500);
+                roundTripMicros = -1;
                 OutputStream output = current.getOutputStream();
                 write(output, SliderProtocol.input(0, sequence++));
                 queue.connect();
@@ -92,6 +97,11 @@ final class SliderConnection implements AutoCloseable {
     }
 
     private void write(OutputStream output, byte[] packet) throws IOException {
+        int sequence = java.nio.ByteBuffer.wrap(packet).getInt(4);
+        synchronized (ackLock) {
+            sequences[sequence & 63] = sequence;
+            sentAt[sequence & 63] = System.nanoTime();
+        }
         writeStarted = System.nanoTime();
         try { output.write(packet); }
         finally { writeStarted = 0; }
@@ -103,6 +113,13 @@ final class SliderConnection implements AutoCloseable {
                 byte[] frame = SliderProtocol.readFrame(current.getInputStream());
                 if (frame.length == 100 && frame[1] == 'L' && frame[2] == 'E' && frame[3] == 'D' && socket == current)
                     observer.leds(Arrays.copyOfRange(frame, 4, 100));
+                else if (frame.length == 8 && frame[1] == 'A' && frame[2] == 'C' && frame[3] == 'K') {
+                    int sequence = java.nio.ByteBuffer.wrap(frame).getInt(4);
+                    synchronized (ackLock) {
+                        if (sequences[sequence & 63] == sequence)
+                            roundTripMicros = (System.nanoTime() - sentAt[sequence & 63]) / 1000;
+                    }
+                }
             }
         } catch (IOException error) { closeSocket(current); }
     }
