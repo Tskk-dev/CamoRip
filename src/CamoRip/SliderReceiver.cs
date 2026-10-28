@@ -15,25 +15,28 @@ internal sealed class SliderReceiver : IAsyncDisposable
     public async Task StartAsync()
     {
         await lifecycle.WaitAsync();
-        try {
-        await stop();
-        shutdown = new CancellationTokenSource();
-        memory = new SliderMemory();
-        var server = new SliderServer(memory, App.Settings.SliderPort, App.Settings.SliderMode != "usb");
-        server.Status += status => Changed?.Invoke(status);
-        CancellationToken token = shutdown.Token;
-        listener = Task.Run(async () =>
+        try
         {
-            try
+            await stop();
+            shutdown = new CancellationTokenSource();
+            memory = new SliderMemory();
+            string mode = App.Settings.SliderMode;
+            var server = new SliderServer(memory, App.Settings.SliderPort, mode != "usb");
+            server.Status += status => Changed?.Invoke(status);
+            CancellationToken token = shutdown.Token;
+            listener = Task.Run(async () =>
             {
-                Changed?.Invoke("Waiting for tablet");
-                if (App.Settings.SliderMode == "udp") await server.RunUdpAsync(token);
-                else await server.RunAsync(token);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-            catch (Exception error) { App.Log(error); Changed?.Invoke(error.Message); }
-        });
-        } finally { lifecycle.Release(); }
+                try
+                {
+                    Changed?.Invoke("Waiting for tablet");
+                    if (mode == "udp") await server.RunUdpAsync(token);
+                    else await server.RunAsync(token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+                catch (Exception error) { App.Log(error); Changed?.Invoke(error.Message); }
+            });
+        }
+        finally { lifecycle.Release(); }
     }
 
     public async Task StopAsync()

@@ -37,6 +37,8 @@ public class SliderConnectionTest {
                     byte[] packet = new byte[42];
                     input.readFully(packet);
                     assertEquals(0, packet[8]);
+                    byte[] ready = new byte[8]; ready[0] = 7; ready[1] = 'A'; ready[2] = 'C'; ready[3] = 'K';
+                    System.arraycopy(packet, 4, ready, 4, 4); peer.getOutputStream().write(ready);
                     assertTrue(connected.await(3, TimeUnit.SECONDS));
                     for (int index = 0; index < 20; index++) { client.update(1); client.update(0); }
                     int edges = 0;
