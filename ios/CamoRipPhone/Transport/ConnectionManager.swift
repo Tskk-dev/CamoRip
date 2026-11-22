@@ -14,6 +14,12 @@ final class ConnectionManager: ObservableObject {
     @Published private(set) var usbListening = false
     @Published private(set) var wirelessStatus = "Scan the QR code in CamoRip on your PC"
     @Published private(set) var wantsStreaming = false
+    @Published private(set) var airConfiguration = AirConfiguration()
+    @Published private(set) var airMask = 0
+    private let airDetector = AirZoneDetector()
+    private var airVideoConfiguration: CaptureConfiguration?
+    private var airCapturePending = false
+    private var airCaptureRevision = 0
     @Published private(set) var formatLabel = "Rear camera: up to 1080p60"
     weak var cameraSession: PhoneCapture?
 
@@ -109,6 +115,10 @@ final class ConnectionManager: ObservableObject {
     /// Called by the phone's Start button or a Windows start_stream request.
     /// The callback waits for capture configuration before enabling frame delivery.
     func startStreaming(notifyPeer: Bool = true) {
+        if airConfiguration.enabled {
+            transport.sendControl(airConfiguration.preview ? .startStream : .stopStream)
+            return
+        }
         guard activeTransport != nil else { return }
         guard applicationIsActive() else {
             fail(code: "app_in_background", message: "Open CamoRip on the iPhone to start video.")
@@ -118,7 +128,7 @@ final class ConnectionManager: ObservableObject {
             fail(code: "camera_denied", message: "Enable Camera permission in iPhone Settings."); return
         }
         wantsStreaming = true
-        if configuring || !negotiated {
+        if configuring || airCapturePending || !negotiated {
             startRequested = true
             pendingStartNotifiesPeer = pendingStartNotifiesPeer || notifyPeer
             return
@@ -162,6 +172,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     func stopStreaming(notifyPeer: Bool = true) {
+        if airConfiguration.enabled { configureAir(AirConfiguration()) }
         cameraSession?.turnTorchOff()
         startRequested = false
         pendingStartNotifiesPeer = false
@@ -179,6 +190,22 @@ final class ConnectionManager: ObservableObject {
     }
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
+        if airDetector.enabled {
+            // Send AIR state straight from the capture queue: hopping through main added
+            // latency and jitter to every AIR input whenever SwiftUI kept main busy. The
+            // detector holds its lock while delivering, so a later configure (disable,
+            // recalibrate, capture change) is always sent after this update, never before.
+            let transport = self.transport
+            let update = airDetector.process(sample, deliver: { update in
+                transport.sendControl(.airState(mask: update.mask, enabled: true))
+            })
+            if let update {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, update.generation == self.airDetector.generation else { return }
+                    self.airMask = update.mask
+                }
+            }
+        }
         streamingLock.lock()
         defer { streamingLock.unlock() }
         // Enqueue atomically with the gate check, so invalidation cannot be
@@ -272,6 +299,7 @@ final class ConnectionManager: ObservableObject {
     }
 
     private func resetSession() {
+        configureAir(AirConfiguration())
         cameraSession?.turnTorchOff()
         handshakeGeneration += 1
         operationGeneration += 1
@@ -299,8 +327,20 @@ final class ConnectionManager: ObservableObject {
             fail(code: "invalid_control", message: "Windows sent an invalid control message."); return
         }
         switch message {
+        case .airConfigure(let settings):
+            guard settings.isValid else { fail(code: "invalid_air_settings", message: "Invalid AIR calibration settings."); return }
+            if settings.enabled {
+                guard activeTransport != nil, applicationIsActive(), cameraIsAuthorized() else {
+                    fail(code: "camera_unavailable", message: "Open the app and allow Camera access before starting AIR."); return
+                }
+                if !negotiated || configuring {
+                    fail(code: "air_preview_not_ready", message: "Wait for the camera configuration before enabling calibration preview."); return
+                }
+                if !airConfiguration.enabled { stopStreaming() }
+            }
+            configureAir(settings)
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "keyframe_request_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "keyframe_request_v1", "air_zones_v1", "air_preview_v1", "air_zone_width_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
@@ -396,6 +436,61 @@ final class ConnectionManager: ObservableObject {
         }
     }
 
+    private func configureAir(_ settings: AirConfiguration) {
+        let wasPreviewing = airConfiguration.enabled && airConfiguration.preview
+        let previewing = settings.enabled && settings.preview
+        let wasHighRate = airConfiguration.enabled && !airConfiguration.preview
+        let highRate = settings.enabled && !settings.preview
+        let changeCapture = wasHighRate != highRate || airCapturePending
+        airCaptureRevision += 1
+        let revision = airCaptureRevision
+        airConfiguration = settings
+        airMask = airDetector.configure(changeCapture ? AirConfiguration() : settings)
+        streamingLock.lock(); streamingForCapture = previewing && !changeCapture; streamingLock.unlock()
+        if wasPreviewing && (!previewing || changeCapture) { encoder.flush() }
+        setIdleTimerDisabled(settings.enabled)
+        if activeTransport != nil {
+            state = previewing && !changeCapture ? .streaming : .connected
+            transport.sendControl(previewing && !changeCapture ? .startStream : .stopStream)
+            transport.sendControl(.airState(mask: airMask, enabled: settings.enabled))
+        }
+        guard changeCapture, let camera = cameraSession else {
+            if previewing { encoder.requestKeyframe() }
+            if settings.enabled { cameraSession?.start() }
+            return
+        }
+        if highRate && airVideoConfiguration == nil { airVideoConfiguration = camera.configuration }
+        guard let video = airVideoConfiguration else { return }
+        let target = highRate ? CaptureConfiguration(width: 1280, height: 720, fps: 240) : video
+        airCapturePending = true
+        camera.configure(width: target.width, height: target.height, fps: target.fps) { [weak self] result in
+            guard let self, revision == self.airCaptureRevision else { return }
+            self.airCapturePending = false
+            if !highRate { self.airVideoConfiguration = nil }
+            switch result {
+            case .success(let actual):
+                self.airMask = self.airDetector.configure(settings)
+                self.formatLabel = "\(actual.width) × \(actual.height) · \(actual.fps) fps"
+                DiagnosticLog.write("AIR capture: \(actual.resolution) @ \(actual.fps) fps; preview=\(previewing)")
+                if settings.enabled && self.activeTransport != nil {
+                    camera.start()
+                    self.streamingLock.lock(); self.streamingForCapture = previewing; self.streamingLock.unlock()
+                    if previewing {
+                        self.encoder.requestKeyframe()
+                        self.state = .streaming
+                        self.transport.sendControl(.startStream)
+                    }
+                    self.startMetricsLogging()
+                } else if self.wantsStreaming {
+                    self.startRequested = false
+                    self.startStreaming()
+                }
+            case .failure(let error):
+                self.fail(code: "air_capture_failed", message: error.localizedDescription)
+            }
+        }
+    }
+
     private func startMetricsLogging() {
         guard enableTimers else { return }
         metricsTimer?.invalidate()
@@ -452,6 +547,8 @@ final class ConnectionManager: ObservableObject {
 // MARK: - Control Message Types
 
 enum ControlMessage: Codable {
+    case airConfigure(AirConfiguration)
+    case airState(mask: Int, enabled: Bool)
     case hello(deviceName: String, capabilities: [String])
     case welcome
     case getCameraState
@@ -474,6 +571,7 @@ enum ControlMessage: Codable {
     case orientationChanged(orientation: String)
 
     private enum CodingKeys: String, CodingKey {
+        case mask, enabled
         case request_id, camera_id, values, error, torch_available, torch_on, auto_exposure_supported, auto_focus_supported, auto_white_balance_supported, ranges
         case type, deviceName, capabilities, resolution, fps, codec, bitrate, ts
         case cameraID, cameraName, cameras, currentCameraID
@@ -483,6 +581,8 @@ enum ControlMessage: Codable {
 
     var type: String {
         switch self {
+        case .airConfigure: return "air_configure"
+        case .airState: return "air_state"
         case .getCameraState:      return "get_camera_state"
         case .cameraSettings:      return "camera_settings"
         case .cameraState:         return "camera_state"
@@ -511,6 +611,10 @@ enum ControlMessage: Codable {
         try container.encode(type, forKey: .type)
 
         switch self {
+        case .airConfigure(let configuration): try configuration.encode(to: encoder)
+        case .airState(let mask, let enabled):
+            try container.encode(mask, forKey: .mask)
+            try container.encode(enabled, forKey: .enabled)
         case .getCameraState: break
         case .cameraSettings(let request):
             try request.encode(to: encoder)
@@ -556,6 +660,8 @@ enum ControlMessage: Codable {
         let type = try container.decode(String.self, forKey: .type)
 
         switch type {
+        case "air_configure": self = .airConfigure(try AirConfiguration(from: decoder))
+        case "air_state": self = .airState(mask: try container.decode(Int.self, forKey: .mask), enabled: try container.decode(Bool.self, forKey: .enabled))
         case "get_camera_state": self = .getCameraState
         case "camera_settings": self = .cameraSettings(try CameraControlRequest(from: decoder))
         case "camera_state": self = .cameraState(try CameraControlState(from: decoder))

@@ -63,6 +63,7 @@ targets:
     sources:
       - path: Tests
       - path: CamoRipPhone/Camera/CameraControlProtocol.swift
+      - path: CamoRipPhone/Camera/AirZoneDetector.swift
       - path: CamoRipPhone/Camera/CaptureMirroring.swift
       - path: CamoRipPhone/Camera/CameraSession.swift
       - path: CamoRipPhone/Camera/CameraControls.swift

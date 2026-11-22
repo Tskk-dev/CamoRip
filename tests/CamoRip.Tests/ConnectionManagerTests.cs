@@ -8,6 +8,45 @@ namespace CamoRip.Tests;
 
 public class ConnectionManagerTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AirCapabilityAndStateUseExistingConnectionAndRejectInvalidMasks(bool supportsWidth)
+    {
+        using var service = new FakeAppleService();
+        var received = new TaskCompletionSource<AirState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = Task.Run(async () => {
+            await DiscoveryAsync(service);
+            await service.ServeOnceAsync(async (_, stream) => {
+                await FakeAppleService.ReplyAsync(stream, "<key>MessageType</key><string>Result</string><key>Number</key><integer>0</integer>");
+                Assert.IsType<Welcome>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new Hello { Capabilities = supportsWidth
+                    ? ["h264", "air_zones_v1", "air_preview_v1", "air_zone_width_v1"]
+                    : ["h264", "air_zones_v1", "air_preview_v1"] });
+                var settings = Assert.IsType<AirConfigure>(await ReadControlAsync(stream));
+                Assert.True(settings.Enabled);
+                Assert.True(settings.Preview);
+                Assert.True(settings.IsValid);
+                Assert.Equal(supportsWidth ? 0.2 : 0, settings.Width);
+                await SendControlAsync(stream, new AirState { Enabled = true, Mask = 64 });
+                await SendControlAsync(stream, new AirState { Enabled = true, Mask = 7 });
+                await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            });
+        });
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(service.Port), TimeSpan.FromSeconds(1)));
+        manager.StateChanged += (_, state) => {
+            if (state != TransportState.Connected) return;
+            Assert.Equal(supportsWidth, manager.SupportsAirZoneWidth);
+            if (!supportsWidth)
+                Assert.Throws<InvalidOperationException>(() => { _ = manager.ConfigureAirAsync(new AirConfigure { Width = 0.2 }); });
+            _ = manager.ConfigureAirAsync(new AirConfigure { Enabled = true, Preview = true, Width = supportsWidth ? 0.2 : 0 });
+        };
+        manager.AirStateReceived += (_, state) => received.TrySetResult(state);
+        await manager.StartAsync();
+        var result = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(7, result.Mask);
+        await server;
+    }
     [Fact]
     public async Task UpdatedPhoneAcceptsHighBitrateAndReportsControlRoundTrip()
     {

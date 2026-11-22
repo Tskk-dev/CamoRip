@@ -1,4 +1,4 @@
-name: Build CamoRip
+name: Build CamoRip AIR
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Installer compilation failed.' }
       - uses: actions/upload-artifact@v4
         with:
-          name: camorip-windows-x64
+          name: camorip-air-windows-x64
           path: artifacts/installer/*.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
@@ -62,14 +62,14 @@ jobs:
             minimum_ios: '15.0'
             minimum_major: 15
             model: any
-            ipa: CamoRip-legacy-unsigned.ipa
-            artifact: camorip-ios-legacy-unsigned
+            ipa: CamoRip-AIR-legacy-unsigned.ipa
+            artifact: camorip-air-ios-legacy-unsigned
           - profile: Regular
             minimum_ios: '18.0'
             minimum_major: 18
             model: any
-            ipa: CamoRip-regular-unsigned.ipa
-            artifact: camorip-ios-regular-unsigned
+            ipa: CamoRip-AIR-regular-unsigned.ipa
+            artifact: camorip-air-ios-regular-unsigned
     runs-on: macos-15
     timeout-minutes: 25
     steps:

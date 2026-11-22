@@ -1,5 +1,21 @@
 # CamoRip
 
+## Experimental AIR branch
+
+This branch adds a Chunithm AIR controller. Mainline CamoRip stays separate.
+
+1. Install this branch's Windows build and matching Legacy or Regular IPA.
+2. Connect over USB or pair over Wi-Fi. Select the rear camera and preferably 720p60.
+3. Start the game with the Brokenithm input DLL that creates `Local\BROKENITHM_SHARED_BUFFER`.
+4. Open **Chunithm AIR** in the PC sidebar and enable input. **Live calibration preview on PC** shows the camera and six sensor outlines inside CamoRip. Triggered zones turn green and show **TRIGGERED**; cleared zones show **clear**.
+5. Set the zone column, height and threshold on PC. Clear your hands and click **Apply and recalibrate empty background**.
+
+AIR detection always runs on the phone. PC calibration preview temporarily sends video as well as zone states. Turn that preview off for gameplay to stop video encoding/transmission without losing calibration. Minimizing to the tray also switches calibration video off. Zone indicators keep updating with video off and clear if sensor updates expire. Phone preview and screen dimming remain available. Input releases when disabled, disconnected, or stale for 500 ms; the watchdog checks every 100 ms.
+
+This detects brightness changes, not fingers or hand landmarks. Shadows, camera movement and exposure changes can trigger zones. Recalibrate after moving the camera or changing lighting. Turn AIR off before using the webcam again.
+
+Compatibility targets the six-zone input behavior of [Chuni Air Mobile](https://github.com/karnesss/chuni-air-mobile/releases/tag/newrelease). Its Android app, ADB bridge and source are not bundled. This branch's builds replace the installed CamoRip app; they are not a second installation. Physical-device accuracy and end-to-end latency still need measurement.
+
 CamoRip turns an iPhone into a webcam for Windows 11. It streams video over USB or a paired local Wi-Fi network and exposes the camera to compatible apps such as Windows Camera and meeting software.
 
 ## Features
