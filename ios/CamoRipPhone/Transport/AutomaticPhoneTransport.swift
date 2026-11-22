@@ -10,7 +10,8 @@ final class AutomaticPhoneTransport: PhoneTransport {
     var connectionKind: ConnectionManager.TransportType { active?.connectionKind ?? .usb }
     private let usb = USBTransport()
     private let wifi = USBTransport(wireless: true)
-    /// Mutated on main only. The encoder thread reads `videoOutput`, a lock-protected copy.
+    /// Mutated on main only. Callers off main (encoded video, AIR state from the capture
+    /// queue) read `videoOutput`, a lock-protected copy.
     private var active: USBTransport? {
         didSet { outputLock.lock(); videoOutput = active; outputLock.unlock() }
     }
@@ -87,7 +88,13 @@ final class AutomaticPhoneTransport: PhoneTransport {
         wifi.disconnect(); onWirelessStatus?("Wireless pairing removed")
     }
     func disconnect() { usb.disconnect(); wifi.disconnect() }
-    func sendControl(_ message: ControlMessage) { active?.sendControl(message) }
+    func sendControl(_ message: ControlMessage) {
+        // Also called from the capture queue (AIR state), so read the lock-protected copy.
+        outputLock.lock()
+        let output = videoOutput
+        outputLock.unlock()
+        output?.sendControl(message)
+    }
     func sendVideoFrame(_ frame: VideoEncoder.EncodedFrame) {
         // Do not hop through main. Dropping an encoded frame there (when SwiftUI or the
         // system kept main busy for two frame intervals) skipped USBTransport's keyframe

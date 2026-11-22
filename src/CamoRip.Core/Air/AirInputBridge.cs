@@ -79,15 +79,33 @@ public sealed class AirInputBridge : IDisposable
             }
             var bytes = BeamBytes(value);
             view.WriteArray(0, bytes, 0, bytes.Length);
-            StatusChanged?.Invoke(this, updated != 0 && Environment.TickCount64 - updated >= 500
-                ? "AIR paused: phone updates timed out; all zones released."
-                : $"AIR zones (top to bottom): {string.Concat(Enumerable.Range(0, 6).Select(zone => (value >> zone) & 1))} · Brokenithm connected");
+            // Raise status only when it changes: this runs on every AIR update and every
+            // 100 ms tick, and each event costs a UI-thread dispatch.
+            bool paused = updated != 0 && Environment.TickCount64 - updated >= 500;
+            if (value != statusMask || paused != statusPaused)
+            {
+                statusMask = value; statusPaused = paused;
+                report(paused
+                    ? "AIR paused: phone updates timed out; all zones released."
+                    : $"AIR zones (top to bottom): {string.Concat(Enumerable.Range(0, 6).Select(zone => (value >> zone) & 1))} · Brokenithm connected");
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             close();
-            StatusChanged?.Invoke(this, "Waiting for Brokenithm shared buffer. Start the game and its input DLL.");
+            statusMask = -1;
+            report("Waiting for Brokenithm shared buffer. Start the game and its input DLL.");
         }
+    }
+
+    private int statusMask = -1;
+    private bool statusPaused;
+    private string? status;
+    private void report(string text)
+    {
+        if (text == status) return;
+        status = text;
+        StatusChanged?.Invoke(this, text);
     }
 
     private void close() { view?.Dispose(); view = null; mapping?.Dispose(); mapping = null; }

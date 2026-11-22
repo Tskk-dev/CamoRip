@@ -191,12 +191,18 @@ final class ConnectionManager: ObservableObject {
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
         if airDetector.enabled {
-            if let update = airDetector.process(sample) {
+            // Send AIR state straight from the capture queue: hopping through main added
+            // latency and jitter to every AIR input whenever SwiftUI kept main busy. The
+            // detector holds its lock while delivering, so a later configure (disable,
+            // recalibrate, capture change) is always sent after this update, never before.
+            let transport = self.transport
+            let update = airDetector.process(sample, deliver: { update in
+                transport.sendControl(.airState(mask: update.mask, enabled: true))
+            })
+            if let update {
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.airConfiguration.enabled, update.generation == self.airDetector.generation,
-                          self.activeTransport != nil else { return }
+                    guard let self, update.generation == self.airDetector.generation else { return }
                     self.airMask = update.mask
-                    self.transport.sendControl(.airState(mask: update.mask, enabled: true))
                 }
             }
         }
