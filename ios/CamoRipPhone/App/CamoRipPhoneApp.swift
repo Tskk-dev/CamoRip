@@ -14,6 +14,8 @@ struct CamoRipPhoneApp: App {
         manager.cameraSession = camera
         camera.onVideoSampleBuffer = { [weak manager] sample in manager?.handleVideoSample(sample) }
         camera.onError = { [weak manager] message in manager?.cameraFailed(message) }
+        camera.onInterrupted = { [weak manager] message in manager?.cameraInterrupted(message) }
+        camera.onInterruptionEnded = { [weak manager] in manager?.cameraInterruptionEnded() }
         _connectionManager = StateObject(wrappedValue: manager)
         _cameraSession = StateObject(wrappedValue: camera)
     }

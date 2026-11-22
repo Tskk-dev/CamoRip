@@ -79,15 +79,23 @@ public sealed class AirInputBridge : IDisposable
             }
             var bytes = BeamBytes(value);
             view.WriteArray(0, bytes, 0, bytes.Length);
-            StatusChanged?.Invoke(this, updated != 0 && Environment.TickCount64 - updated >= 500
-                ? "Input paused"
-                : "Connected");
+            // Raise status only when it changes: this runs on every AIR update and every
+            // 100 ms tick, and each event costs a UI-thread dispatch.
+            report(updated != 0 && Environment.TickCount64 - updated >= 500 ? "Input paused" : "Connected");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             close();
-            StatusChanged?.Invoke(this, "Waiting for game");
+            report("Waiting for game");
         }
+    }
+
+    private string? status;
+    private void report(string text)
+    {
+        if (text == status) return;
+        status = text;
+        StatusChanged?.Invoke(this, text);
     }
 
     private void close() { view?.Dispose(); view = null; mapping?.Dispose(); mapping = null; }

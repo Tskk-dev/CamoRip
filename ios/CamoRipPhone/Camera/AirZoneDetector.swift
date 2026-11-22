@@ -53,6 +53,10 @@ final class AirZoneDetector {
     private var mask = 0
     private var lastSent = -Double.infinity
     private var revision = 0
+    // Per-frame scratch state, reused so 240 fps detection does not allocate per frame.
+    private var rectangles: [CGRect] = []
+    private var rectanglesRevision = -1, rectanglesWidth = 0, rectanglesHeight = 0
+    private var means: [Double] = []
     var generation: Int { lock.lock(); defer { lock.unlock() }; return revision }
     var enabled: Bool { lock.lock(); defer { lock.unlock() }; return configuration.enabled }
 
@@ -69,7 +73,10 @@ final class AirZoneDetector {
         return mask
     }
 
-    func process(_ sample: CMSampleBuffer) -> Update? {
+    /// `deliver` runs while the detector lock is held, so an update computed from one
+    /// configuration is always handed off before a later `configure` call returns.
+    @discardableResult
+    func process(_ sample: CMSampleBuffer, deliver: ((Update) -> Void)? = nil) -> Update? {
         guard let pixels = CMSampleBufferGetImageBuffer(sample),
               CVPixelBufferGetPlaneCount(pixels) >= 2 else { return nil }
         CVPixelBufferLockBaseAddress(pixels, .readOnly)
@@ -77,14 +84,20 @@ final class AirZoneDetector {
         guard let address = CVPixelBufferGetBaseAddressOfPlane(pixels, 0) else { return nil }
         return processLuma(address.assumingMemoryBound(to: UInt8.self),
             width: CVPixelBufferGetWidthOfPlane(pixels, 0), height: CVPixelBufferGetHeightOfPlane(pixels, 0),
-            stride: CVPixelBufferGetBytesPerRowOfPlane(pixels, 0), now: ProcessInfo.processInfo.systemUptime)
+            stride: CVPixelBufferGetBytesPerRowOfPlane(pixels, 0), now: ProcessInfo.processInfo.systemUptime,
+            deliver: deliver)
     }
 
-    func processLuma(_ bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int, now: Double) -> Update? {
+    func processLuma(_ bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int, now: Double,
+                     deliver: ((Update) -> Void)? = nil) -> Update? {
         lock.lock(); defer { lock.unlock() }
         guard configuration.enabled, width >= 2, height >= 2, stride >= width else { return nil }
-        var means: [Double] = []
-        for rectangle in configuration.rectangles(width: width, height: height) {
+        if rectanglesRevision != revision || rectanglesWidth != width || rectanglesHeight != height {
+            rectangles = configuration.rectangles(width: width, height: height)
+            rectanglesRevision = revision; rectanglesWidth = width; rectanglesHeight = height
+        }
+        means.removeAll(keepingCapacity: true)
+        for rectangle in rectangles {
             let top = Double(rectangle.minY)
             let left = Double(rectangle.minX)
             let stepY = Double(rectangle.height) / 8.0
@@ -124,6 +137,8 @@ final class AirZoneDetector {
         }
         guard mask != previous || now - lastSent >= 0.1 else { return nil }
         lastSent = now
-        return Update(mask: mask, generation: revision)
+        let update = Update(mask: mask, generation: revision)
+        deliver?(update)
+        return update
     }
 }

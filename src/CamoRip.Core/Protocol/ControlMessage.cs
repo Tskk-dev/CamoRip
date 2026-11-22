@@ -45,6 +45,7 @@ public abstract record ControlMessage
             "configure_ack"     => doc.Deserialize<ConfigureAck>(_options),
             "start_stream"      => new StartStream(),
             "stop_stream"       => new StopStream(),
+            "request_keyframe"  => new RequestKeyframe(),
             "switch_camera"     => doc.Deserialize<SwitchCamera>(_options),
             "switch_camera_ack" => doc.Deserialize<SwitchCameraAck>(_options),
             "list_cameras"      => new ListCameras(),
@@ -128,6 +129,12 @@ public sealed record StartStream : ControlMessage
 public sealed record StopStream : ControlMessage
 {
     public override string Type => "stop_stream";
+}
+
+/// PC asks for an immediate IDR after it discarded video (requires keyframe_request_v1).
+public sealed record RequestKeyframe : ControlMessage
+{
+    public override string Type => "request_keyframe";
 }
 
 /// iPhone confirms a camera switch.

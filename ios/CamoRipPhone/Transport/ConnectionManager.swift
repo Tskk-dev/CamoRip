@@ -46,6 +46,10 @@ final class ConnectionManager: ObservableObject {
     private var streamingForCapture = false
     private var lastPong = Date()
     private var backgroundObserver: NSObjectProtocol?
+    /// Set after an encoder failure or backgrounding; the next start prepares a fresh session.
+    private var encoderNeedsRebuild = false
+    /// Set when a capture interruption stopped an active stream; cleared by any explicit stop.
+    private var resumeAfterInterruption = false
 
     init(transport: PhoneTransport = AutomaticPhoneTransport(), encoder: PhoneEncoder = VideoEncoder(),
          applicationIsActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
@@ -84,6 +88,9 @@ final class ConnectionManager: ObservableObject {
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 self?.stopStreaming()
                 self?.cameraSession?.stop()
+                // iOS can invalidate the hardware compression session while the app is in
+                // the background. Rebuild it before the next start rather than reusing it.
+                self?.encoderNeedsRebuild = true
             }
     }
 
@@ -135,6 +142,29 @@ final class ConnectionManager: ObservableObject {
             if notifyPeer { transport.sendControl(.startStream) }
             return
         }
+        if encoderNeedsRebuild, let config = cameraSession?.configuration {
+            // Reusing a failed or invalidated VTCompressionSession makes every retry fail.
+            startRequested = true
+            pendingStartNotifiesPeer = pendingStartNotifiesPeer || notifyPeer
+            configuring = true
+            operationGeneration += 1
+            let generation = handshakeGeneration
+            let operation = operationGeneration
+            DiagnosticLog.write("Rebuilding encoder before starting video")
+            prepareEncoder(config) { [weak self] in
+                guard let self, generation == self.handshakeGeneration,
+                      operation == self.operationGeneration else { return }
+                self.configuring = false
+                self.encoderNeedsRebuild = false
+                // A stop that arrived while the encoder was rebuilding wins.
+                guard self.startRequested else { return }
+                let notify = self.pendingStartNotifiesPeer
+                self.startRequested = false
+                self.pendingStartNotifiesPeer = false
+                self.startStreaming(notifyPeer: notify)
+            }
+            return
+        }
         cameraSession?.start()
         captureBaseline = nil
         encoder.requestKeyframe()
@@ -154,6 +184,7 @@ final class ConnectionManager: ObservableObject {
         startRequested = false
         pendingStartNotifiesPeer = false
         wantsStreaming = false
+        resumeAfterInterruption = false
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         // Stop accepting raw frames before flushing the old compression session.
         if activeTransport != nil { state = .connected }
@@ -167,12 +198,18 @@ final class ConnectionManager: ObservableObject {
 
     func handleVideoSample(_ sample: CMSampleBuffer) {
         if airDetector.enabled {
-            if let update = airDetector.process(sample) {
+            // Send AIR state straight from the capture queue: hopping through main added
+            // latency and jitter to every AIR input whenever SwiftUI kept main busy. The
+            // detector holds its lock while delivering, so a later configure (disable,
+            // recalibrate, capture change) is always sent after this update, never before.
+            let transport = self.transport
+            let update = airDetector.process(sample, deliver: { update in
+                transport.sendControl(.airState(mask: update.mask, enabled: true))
+            })
+            if let update {
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.airConfiguration.enabled, update.generation == self.airDetector.generation,
-                          self.activeTransport != nil else { return }
+                    guard let self, update.generation == self.airDetector.generation else { return }
                     self.airMask = update.mask
-                    self.transport.sendControl(.airState(mask: update.mask, enabled: true))
                 }
             }
         }
@@ -184,6 +221,24 @@ final class ConnectionManager: ObservableObject {
     }
 
     func cameraFailed(_ message: String) { fail(code: "camera_unavailable", message: message) }
+
+    /// A phone call, Split View app or Control Center took the camera.
+    func cameraInterrupted(_ message: String) {
+        let wasStreaming = state == .streaming || wantsStreaming
+        fail(code: "camera_unavailable", message: message)
+        encoderNeedsRebuild = true
+        resumeAfterInterruption = wasStreaming
+    }
+
+    /// Resume the stream the interruption stopped, so Windows does not have to press Start again.
+    func cameraInterruptionEnded() {
+        guard resumeAfterInterruption else { return }
+        resumeAfterInterruption = false
+        guard activeTransport != nil, applicationIsActive() else { return }
+        DiagnosticLog.write("Camera interruption ended; resuming video")
+        cameraSession?.start()
+        startStreaming()
+    }
 
     func switchCamera(cameraID: String? = nil) {
         guard let camera = cameraSession else { return }
@@ -204,6 +259,7 @@ final class ConnectionManager: ObservableObject {
                 guard let self, generation == self.handshakeGeneration,
                       operation == self.operationGeneration else { return }
                 self.configuring = false
+                self.encoderNeedsRebuild = false
                 if self.activeTransport != nil {
                     self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps)))
                     self.transport.sendControl(.switchCameraAck(cameraID: info.id, cameraName: info.name))
@@ -264,6 +320,9 @@ final class ConnectionManager: ObservableObject {
         startRequested = false
         pendingStartNotifiesPeer = false
         wantsStreaming = false
+        // The next configure prepares a fresh encoder, and a new link starts stopped.
+        encoderNeedsRebuild = false
+        resumeAfterInterruption = false
         streamingLock.lock(); streamingForCapture = false; streamingLock.unlock()
         setIdleTimerDisabled(false)
         encoder.invalidate()
@@ -293,7 +352,7 @@ final class ConnectionManager: ObservableObject {
             }
             configureAir(settings)
         case .welcome:
-            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "air_zones_v1", "air_preview_v1", "air_zone_width_v1", "capture_stats_v1"]))
+            transport.sendControl(.hello(deviceName: UIDevice.current.name, capabilities: ["h264", "usb", "video_only", "camera_controls_v1", "capture_modes_v1", "bitrate_control_v1", "keyframe_request_v1", "air_zones_v1", "air_preview_v1", "air_zone_width_v1", "capture_stats_v1"]))
             transport.sendControl(.orientationChanged(orientation: "landscape"))
             sendCameras()
             sendCameraState()
@@ -326,6 +385,7 @@ final class ConnectionManager: ObservableObject {
                             guard let self, generation == self.handshakeGeneration,
                                   operation == self.operationGeneration else { return }
                             self.configuring = false
+                            self.encoderNeedsRebuild = false
                             self.negotiated = true
                             self.state = .connected
                             self.transport.sendControl(.configureAck(resolution: config.resolution, fps: Int(config.fps), requestID: requestID))
@@ -349,6 +409,9 @@ final class ConnectionManager: ObservableObject {
         case .stopStream: stopStreaming()
         case .switchCamera(let id): switchCamera(cameraID: id)
         case .getCameraState: sendCameraState()
+        // Windows discarded video (queue overflow, decoder error) and needs an IDR now
+        // rather than at the next scheduled two-second keyframe.
+        case .requestKeyframe: if state == .streaming { encoder.requestKeyframe() }
         case .cameraSettings(let request):
             let generation = handshakeGeneration
             let operation = operationGeneration
@@ -496,6 +559,11 @@ final class ConnectionManager: ObservableObject {
         operationGeneration += 1
         configuring = false
         stopStreaming(notifyPeer: false)
+        if code == "encoder_failed" {
+            // Never reuse a compression session that reported an error.
+            encoderNeedsRebuild = true
+            encoder.invalidate()
+        }
         DiagnosticLog.write("Error [\(code)]: \(message)")
         state = .error(message)
         transport.sendControl(.error(code: code, message: message))
@@ -528,6 +596,8 @@ enum ControlMessage: Codable {
     case configureAck(resolution: String, fps: Int, requestID: Int64 = 0)
     case startStream
     case stopStream
+    /// PC → iOS (keyframe_request_v1): send an IDR as soon as possible.
+    case requestKeyframe
     case switchCamera(cameraID: String?)
     case switchCameraAck(cameraID: String, cameraName: String)
     case listCameras
@@ -561,6 +631,7 @@ enum ControlMessage: Codable {
         case .configureAck:        return "configure_ack"
         case .startStream:         return "start_stream"
         case .stopStream:          return "stop_stream"
+        case .requestKeyframe:     return "request_keyframe"
         case .switchCamera:        return "switch_camera"
         case .switchCameraAck:     return "switch_camera_ack"
         case .listCameras:         return "list_cameras"
@@ -604,7 +675,7 @@ enum ControlMessage: Codable {
             try container.encode(requestID, forKey: .request_id)
             try container.encode(resolution, forKey: .resolution)
             try container.encode(fps, forKey: .fps)
-        case .startStream, .stopStream, .listCameras:
+        case .startStream, .stopStream, .listCameras, .requestKeyframe:
             break
         case .switchCamera(let cameraID):
             try container.encodeIfPresent(cameraID, forKey: .cameraID)
@@ -655,6 +726,8 @@ enum ControlMessage: Codable {
             self = .startStream
         case "stop_stream":
             self = .stopStream
+        case "request_keyframe":
+            self = .requestKeyframe
         case "switch_camera":
             let cameraID = try container.decodeIfPresent(String.self, forKey: .cameraID)
             self = .switchCamera(cameraID: cameraID)
