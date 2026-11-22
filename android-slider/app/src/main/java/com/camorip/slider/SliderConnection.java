@@ -56,21 +56,27 @@ final class SliderConnection implements AutoCloseable {
         worker.setDaemon(true);
     }
 
+    /**
+     * A write blocked this long means the link is dead, not just jittery. 50 ms (two dozen
+     * packets in the 1 KB send buffer) tripped on ordinary USB/ADB or GC hiccups, and each
+     * reconnect released every held input on the PC.
+     */
+    private static final long WRITE_STALL_NANOS = 500_000_000L;
+
     void start() {
         watchdog.scheduleAtFixedRate(new TimerTask() {
             @Override public void run() {
                 long started = writeStarted;
-                if (started != 0 && System.nanoTime() - started > 50_000_000L) closeSocket(socket);
+                if (started != 0 && System.nanoTime() - started > WRITE_STALL_NANOS) closeSocket(socket);
             }
         }, 10, 10);
         worker.start();
     }
 
     void update(long mask) {
-        if (!queue.update(mask)) {
-            observer.status("PC is falling behind; reconnecting with released inputs", false);
-            closeSocket(socket);
-        }
+        // A full or stale queue collapses to the newest state (see InputQueue); keep the
+        // connection, since reconnecting would release every held input.
+        queue.update(mask);
     }
 
     void buttons(boolean test, boolean service) { testButton = test; serviceButton = service; queue.wake(); }
@@ -78,14 +84,20 @@ final class SliderConnection implements AutoCloseable {
 
     private void run() {
         int sequence = 1;
+        // One packet buffer for the life of the sender: writes copy it synchronously, and a
+        // fresh 42-byte array per packet (up to 1000 per second) fed GC pauses.
+        byte[] packet = new byte[42];
         while (running) {
             Link current = linkFactory.get();
             socket = current;
+            boolean established = false;
             try {
                 current.connect(port);
+                established = true;
                 roundTripMicros = -1;
                 OutputStream output = current.output();
-                write(output, SliderProtocol.input(0, sequence++));
+                SliderProtocol.fillInput(packet, 0, sequence);
+                write(output, packet, sequence++);
                 queue.connect();
                 observer.status("Waiting for PC", false);
                 Thread reader = new Thread(() -> receive(current), "slider-leds");
@@ -98,9 +110,9 @@ final class SliderConnection implements AutoCloseable {
                         writeStarted = System.nanoTime();
                         try { output.write(command); } finally { writeStarted = 0; }
                     }
-                    byte[] packet = SliderProtocol.input(mask, sequence++);
+                    SliderProtocol.fillInput(packet, mask, sequence);
                     packet[40] = testButton ? (byte)1 : 0; packet[41] = serviceButton ? (byte)1 : 0;
-                    write(output, packet);
+                    write(output, packet, sequence++);
                     sentMask = mask;
                     packetsSent++;
                 }
@@ -116,13 +128,13 @@ final class SliderConnection implements AutoCloseable {
                 sentMask = 0;
                 closeSocket(current);
             }
-            try { Thread.sleep(500); }
+            // Reconnect quickly after a live link drops; back off while the PC is unreachable.
+            try { Thread.sleep(established ? 100 : 500); }
             catch (InterruptedException error) { Thread.currentThread().interrupt(); break; }
         }
     }
 
-    private void write(OutputStream output, byte[] packet) throws IOException {
-        int sequence = java.nio.ByteBuffer.wrap(packet).getInt(4);
+    private void write(OutputStream output, byte[] packet, int sequence) throws IOException {
         synchronized (ackLock) {
             sequences[sequence & 63] = sequence;
             sentAt[sequence & 63] = System.nanoTime();
