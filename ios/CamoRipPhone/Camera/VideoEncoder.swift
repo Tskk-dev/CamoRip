@@ -106,6 +106,19 @@ final class VideoEncoder {
             duration: CMSampleBufferGetDuration(sample), frameProperties: options,
             sourceFrameRefcon: nil, infoFlagsOut: nil)
         sequence &+= 1
+        if result == kVTInvalidSessionErr {
+            // iOS invalidates hardware compression sessions in the background and after a
+            // media-services reset. Rebuild with the same settings so every path that
+            // encodes (streaming, AIR calibration preview) recovers; the next frame is an IDR.
+            retire()
+            do {
+                self.compression = try open(settings)
+                self.settings = settings
+                self.sequence = 0
+                DiagnosticLog.write("Encoder session was invalidated by iOS; rebuilt it")
+            } catch { onError?(error) }
+            return
+        }
         if result != noErr { onError?(Self.error(result)) }
     }
 
@@ -187,7 +200,13 @@ final class VideoEncoder {
     private static let output: VTCompressionOutputCallback = { reference, _, status, flags, sample in
         guard let reference else { return }
         let owner = Unmanaged<VideoEncoder>.fromOpaque(reference).takeUnretainedValue()
-        guard status == noErr else { owner.onError?(VideoEncoder.error(status)); return }
+        guard status == noErr else {
+            // Frames in flight when iOS invalidates the session report it here; the next
+            // submit rebuilds the session, so this must not stop streaming.
+            if status == kVTInvalidSessionErr { DiagnosticLog.write("Encoder dropped an in-flight frame: session invalidated") }
+            else { owner.onError?(VideoEncoder.error(status)) }
+            return
+        }
         guard !flags.contains(.frameDropped), let sample, CMSampleBufferDataIsReady(sample),
               let frame = VideoEncoder.packet(sample) else { return }
         DiagnosticLog.record(.encoded)

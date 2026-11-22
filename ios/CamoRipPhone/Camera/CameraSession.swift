@@ -54,7 +54,7 @@ final class CameraSession: NSObject, ObservableObject {
     private var formatFPS: Int32 = 0
     private var appliedFPS: Int32 = 0
     private var pressureObservation: NSKeyValueObservation?
-    private static let pressureLimitedFPS: Int32 = 30
+    private static let pressureMinimumFPS: Int32 = 30
 
     override init() {
         super.init()
@@ -351,15 +351,21 @@ final class CameraSession: NSObject, ObservableObject {
     /// Apple recommends lowering the frame rate when the camera reports serious system
     /// pressure. Otherwise iOS throttles capture unpredictably and, at the shutdown level,
     /// interrupts it. This is common in long wired sessions: charging plus 60 fps capture
-    /// and H.264 encoding heats the phone.
+    /// and H.264 encoding heats the phone. The reduction is proportional, so 60 fps video
+    /// drops to 30, while 240 fps capture drops to 120 (serious) and 60 (critical), never
+    /// below 30.
     private func pressureAdjustedFPS(for device: AVCaptureDevice) -> Int32 {
         let level = device.systemPressureState.level
-        guard level == .serious || level == .critical || level == .shutdown,
-              formatFPS > Self.pressureLimitedFPS,
+        let divisor: Int32
+        if level == .serious { divisor = 2 }
+        else if level == .critical || level == .shutdown { divisor = 4 }
+        else { return formatFPS }
+        let target = max(Self.pressureMinimumFPS, formatFPS / divisor)
+        guard target < formatFPS,
               device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
-                  $0.minFrameRate <= Double(Self.pressureLimitedFPS) && $0.maxFrameRate >= Double(Self.pressureLimitedFPS)
+                  $0.minFrameRate <= Double(target) && $0.maxFrameRate >= Double(target)
               }) else { return formatFPS }
-        return Self.pressureLimitedFPS
+        return target
     }
 
     private func observePressure(of device: AVCaptureDevice) {

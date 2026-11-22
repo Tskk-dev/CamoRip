@@ -129,5 +129,7 @@ dimensions. An unsolicited acknowledgement (camera switch) keeps the current
 Windows camera format, and frames are scaled to fit it, because rebuilding the
 Windows camera disconnects any app (for example a video call) using it.
 
-Under serious system pressure the phone captures at 30 fps without changing the
-acknowledged mode; the Windows camera repeats frames to keep its nominal rate.
+Under serious system pressure the phone halves its capture rate (quarters it at
+critical pressure, never below 30 fps) without changing the acknowledged mode:
+60 fps video drops to 30, and 240 fps AIR capture to 120 or 60. The Windows camera
+repeats frames to keep its nominal rate.
