@@ -191,6 +191,44 @@ public class ConnectionManagerTests
         Assert.Equal(new[] { "1920x1080", "3840x2160" }, acknowledgements);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task KeyframeRequestsAreSentOnlyToPhonesThatSupportThem(bool supported)
+    {
+        using var service = new FakeAppleService();
+        var server = Task.Run(async () =>
+        {
+            await DiscoveryAsync(service);
+            await service.ServeOnceAsync(async (_, stream) =>
+            {
+                await FakeAppleService.ReplyAsync(stream, "<key>MessageType</key><string>Result</string><key>Number</key><integer>0</integer>");
+                Assert.IsType<Welcome>(await ReadControlAsync(stream));
+                var capabilities = new List<string> { "h264" };
+                if (supported) capabilities.Add("keyframe_request_v1");
+                await SendControlAsync(stream, new Hello { Capabilities = capabilities });
+                var configure = Assert.IsType<Configure>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new ConfigureAck { RequestId = configure.RequestId, Resolution = configure.Resolution, Fps = configure.Fps });
+                Assert.IsType<StartStream>(await ReadControlAsync(stream));
+                await SendControlAsync(stream, new StartStream());
+                // Older phones close the stream on unknown control types, so they must never see one.
+                if (supported) Assert.IsType<RequestKeyframe>(await ReadControlAsync(stream));
+                else await AssertNoControlAsync(stream);
+            });
+        });
+        await using var manager = new ConnectionManager(new TcpUsbTransport(new UsbMuxClient(service.Port), TimeSpan.FromSeconds(1)));
+        manager.StateChanged += (_, state) => { if (state == TransportState.Connected) _ = manager.ConfigureAsync(); };
+        manager.StreamStateChanged += (_, streaming) => { if (streaming) _ = manager.RequestKeyframeAsync(); };
+        await manager.StartAsync();
+        await server.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void RequestKeyframeRoundTripsThroughJson()
+    {
+        Assert.IsType<RequestKeyframe>(ControlMessage.FromJson(new RequestKeyframe().ToJsonBytes()));
+    }
+
     private static async Task DiscoveryAsync(FakeAppleService service)
     {
         await service.ServeOnceAsync((_, stream) => FakeAppleService.ReplyAsync(stream, """

@@ -50,7 +50,15 @@ final class USBTransport {
                     case .failed(let error):
                         self.listener = nil
                         listener.cancel()
-                        self.onStateChange?(.failed("USB listener failed: \(error.localizedDescription)"))
+                        DiagnosticLog.write("USB listener failed: \(error.localizedDescription)")
+                        // Always restore the listener: while Wi-Fi is the active link this
+                        // failure is not surfaced, and USB would otherwise stay unavailable
+                        // until the app returns to the foreground.
+                        self.queue.asyncAfter(deadline: .now() + 2) { [weak self] in self?.startListening() }
+                        // An accepted USB connection is independent of the listener; keep it.
+                        if self.connection == nil {
+                            self.onStateChange?(.failed("USB listener failed: \(error.localizedDescription)"))
+                        }
                     default: break
                     }
                 }

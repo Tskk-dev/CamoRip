@@ -10,8 +10,9 @@ final class AutomaticPhoneTransport: PhoneTransport {
     var connectionKind: ConnectionManager.TransportType { active?.connectionKind ?? .usb }
     private let usb = USBTransport()
     private let wifi = USBTransport(wireless: true)
+    /// Mutated on main only. The encoder thread reads `videoOutput`, a lock-protected copy.
     private var active: USBTransport? {
-        didSet { outputLock.lock(); outputGeneration += 1; outputLock.unlock() }
+        didSet { outputLock.lock(); videoOutput = active; outputLock.unlock() }
     }
     private var peer: WirelessPeer?
     private var connecting = false
@@ -46,6 +47,13 @@ final class AutomaticPhoneTransport: PhoneTransport {
                     if case .failed(let message) = state { self.onWirelessStatus?(message) }
                     else { self.onWirelessStatus?("Reconnecting to paired PC on Wi-Fi…") }
                 } else {
+                    // .listening describes the USB listener, not the connection. A listener
+                    // that becomes ready again must not orphan a live USB link (control and
+                    // video would be silently dropped until the heartbeat disconnects).
+                    if case .listening = state {
+                        if self.active == nil { self.onStateChange?(state) }
+                        return
+                    }
                     if self.active === self.usb { self.active = nil }
                     if self.active == nil { self.onStateChange?(state) }
                 }
@@ -57,8 +65,8 @@ final class AutomaticPhoneTransport: PhoneTransport {
                 self.onControlMessage?(data)
             }
         }
-        // Encoded output stays on the encoder queue; select the output on main
-        // below before enqueueing each bounded socket send.
+        // Encoded output stays off main: each USBTransport bounds its own in-flight sends
+        // and discards delta frames until a keyframe after any drop.
         transport.onVideoBackpressure = { [weak self] in self?.onVideoBackpressure?() }
     }
     func startListening() {
@@ -81,23 +89,18 @@ final class AutomaticPhoneTransport: PhoneTransport {
     func disconnect() { usb.disconnect(); wifi.disconnect() }
     func sendControl(_ message: ControlMessage) { active?.sendControl(message) }
     func sendVideoFrame(_ frame: VideoEncoder.EncodedFrame) {
-        // Connection selection is main-isolated. Bound queued frames to avoid
-        // retaining a growing list of video packets if main is busy.
+        // Do not hop through main. Dropping an encoded frame there (when SwiftUI or the
+        // system kept main busy for two frame intervals) skipped USBTransport's keyframe
+        // gate, so later delta frames referenced a frame Windows never received and the
+        // picture smeared until the next IDR. The transport's own queue bounds sends and
+        // a new connection always starts by waiting for a keyframe.
         outputLock.lock()
-        guard pendingOutputs < 2 else { outputLock.unlock(); onVideoBackpressure?(); return }
-        let generation = outputGeneration
-        pendingOutputs += 1; outputLock.unlock()
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.outputLock.lock(); self.pendingOutputs -= 1
-            let current = generation == self.outputGeneration; self.outputLock.unlock()
-            guard current else { return }
-            self.active?.sendVideoFrame(frame)
-        }
+        let output = videoOutput
+        outputLock.unlock()
+        output?.sendVideoFrame(frame)
     }
     private let outputLock = NSLock()
-    private var pendingOutputs = 0
-    private var outputGeneration = 0
+    private var videoOutput: USBTransport?
     private func startReconnect() {
         if browser == nil, let peer { startBrowser(peer) }
         guard timer == nil else { return }
