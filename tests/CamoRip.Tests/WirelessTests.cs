@@ -118,6 +118,71 @@ public sealed class WirelessTests
         finally { Directory.Delete(directory, true); }
     }
 
+    [Fact]
+    public async Task MalformedPeersAndIdleLinksDoNotStopTheListener()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "camorip-wireless-" + Guid.NewGuid());
+        try
+        {
+            await using var transport = new WirelessTransport(directory, 0, advertise: false) { IdleTimeout = TimeSpan.FromMilliseconds(500) };
+            using var qr = Decode(transport.BeginPairing()); var fields = qr.RootElement;
+            string fingerprint = fields.GetProperty("fingerprint").GetString()!;
+            string id = fields.GetProperty("id").GetString()!;
+            string token = fields.GetProperty("token").GetString()!;
+            async Task<(TcpClient Client, SslStream Tls)> Open()
+            {
+                var client = new TcpClient(); await client.ConnectAsync("127.0.0.1", transport.ListeningPort);
+                var tls = new SslStream(client.GetStream(), false, (_, certificate, _, _) => certificate is not null &&
+                    Convert.ToHexString(SHA256.HashData(certificate.GetRawCertData())).Equals(fingerprint, StringComparison.OrdinalIgnoreCase));
+                await tls.AuthenticateAsClientAsync("CamoRip");
+                return (client, tls);
+            }
+            async Task<string> Authenticate(SslStream tls, string credential, bool pairing)
+            {
+                await tls.WriteAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { v = 1, pc = id, token = credential, pair = pairing }) + "\n"));
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var line = new List<byte>(); var b = new byte[1];
+                while (await tls.ReadAsync(b, timeout.Token) > 0 && b[0] != 10) line.Add(b[0]);
+                using var response = JsonDocument.Parse(line.ToArray());
+                Assert.True(response.RootElement.GetProperty("ok").GetBoolean());
+                return response.RootElement.GetProperty("token").GetString()!;
+            }
+            static async Task AssertClosed(SslStream tls)
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try { Assert.Equal(0, await tls.ReadAsync(new byte[16], timeout.Token)); }
+                catch (IOException) { }
+            }
+
+            // An unauthenticated peer sends an oversized authentication line.
+            var flood = await Open();
+            using (flood.Client) using (flood.Tls)
+            {
+                await flood.Tls.WriteAsync(new byte[5000]);
+                await AssertClosed(flood.Tls);
+            }
+
+            // An authenticated peer sends control JSON without a type.
+            var paired = await Open();
+            string permanent;
+            using (paired.Client) using (paired.Tls)
+            {
+                permanent = await Authenticate(paired.Tls, token, true);
+                await paired.Tls.WriteAsync("\0{}\n"u8.ToArray());
+                await AssertClosed(paired.Tls);
+            }
+
+            // The listener still accepts, and a silent link is dropped after the idle timeout.
+            var silent = await Open();
+            using (silent.Client) using (silent.Tls)
+            {
+                await Authenticate(silent.Tls, permanent, false);
+                await AssertClosed(silent.Tls);
+            }
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private sealed class FakeUsb : IConnectionTransport
     {
         public event EventHandler<ControlMessage>? ControlMessageReceived { add { } remove { } }
