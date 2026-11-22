@@ -38,6 +38,10 @@ final class CameraSession: NSObject, ObservableObject {
     let captureSession = AVCaptureSession()
     var onVideoSampleBuffer: ((CMSampleBuffer) -> Void)?
     var onError: ((String) -> Void)?
+    /// Capture paused by the system (another app, a call, media services reset). Main queue.
+    var onInterrupted: ((String) -> Void)?
+    /// Capture is running again after an interruption. Main queue.
+    var onInterruptionEnded: (() -> Void)?
 
     let sessionQueue = DispatchQueue(label: "com.camorip.camera.session", qos: .userInteractive)
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -45,6 +49,12 @@ final class CameraSession: NSObject, ObservableObject {
     private var requestedWidth: Int32 = 1920
     private var requestedHeight: Int32 = 1080
     private var requestedFPS: Int32 = 60
+    // sessionQueue only: the active format's frame rate, and the rate applied after any
+    // system-pressure limit.
+    private var formatFPS: Int32 = 0
+    private var appliedFPS: Int32 = 0
+    private var pressureObservation: NSKeyValueObservation?
+    private static let pressureLimitedFPS: Int32 = 30
 
     override init() {
         super.init()
@@ -52,9 +62,14 @@ final class CameraSession: NSObject, ObservableObject {
             name: .AVCaptureSessionRuntimeError, object: captureSession)
         NotificationCenter.default.addObserver(self, selector: #selector(interrupted(_:)),
             name: .AVCaptureSessionWasInterrupted, object: captureSession)
+        NotificationCenter.default.addObserver(self, selector: #selector(interruptionEnded(_:)),
+            name: .AVCaptureSessionInterruptionEnded, object: captureSession)
     }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit {
+        pressureObservation?.invalidate()
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func start() {
         sessionQueue.async { [weak self] in
@@ -171,6 +186,7 @@ final class CameraSession: NSObject, ObservableObject {
             throw error
         }
         configured = true
+        observePressure(of: device)
         // Set after commit as well; configuration commits can reset connection state.
         sessionQueue.async { [weak self] in self?.setOutputOrientation() }
         DispatchQueue.main.async {
@@ -216,10 +232,16 @@ final class CameraSession: NSObject, ObservableObject {
         device.activeVideoMinFrameDuration = .invalid
         device.activeVideoMaxFrameDuration = .invalid
         device.activeFormat = format
-        let duration = CMTime(value: 1, timescale: actualFPS)
+        formatFPS = actualFPS
+        // Under thermal/system pressure start at the reduced rate rather than at 60 fps.
+        let capturedFPS = pressureAdjustedFPS(for: device)
+        let duration = CMTime(value: 1, timescale: capturedFPS)
         device.activeVideoMinFrameDuration = duration
         device.activeVideoMaxFrameDuration = duration
+        appliedFPS = capturedFPS
         let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        // Report the format's rate: the encoder and Windows keep the nominal mode, and the
+        // Windows camera repeats frames if capture is temporarily slower.
         return CaptureConfiguration(width: d.width, height: d.height, fps: actualFPS)
     }
 
@@ -249,6 +271,7 @@ final class CameraSession: NSObject, ObservableObject {
                 throw error
             }
             captureSession.commitConfiguration()
+            observePressure(of: device)
             DiagnosticLog.write("Camera switch: format committed \(config.width)x\(config.height) @ \(config.fps)")
             setOutputOrientation()
             DiagnosticLog.write("Camera switch: output connection configured")
@@ -282,12 +305,87 @@ final class CameraSession: NSObject, ObservableObject {
     private func report(_ message: String) { DispatchQueue.main.async { self.onError?(message) } }
 
     @objc private func runtimeError(_ notification: Notification) {
-        let message = (notification.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription
-        report(message ?? "Camera capture was interrupted. Stop and start the webcam to retry.")
+        let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError
+        let message = error?.localizedDescription ?? "Camera capture was interrupted."
+        DiagnosticLog.write("Capture runtime error: \(message)")
+        DispatchQueue.main.async { self.onInterrupted?(message) }
+        // Apple's guidance: restart the session after a runtime error (for example when
+        // media services were reset). Resume streaming once it is running again.
+        sessionQueue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
+            if !self.captureSession.isRunning { self.captureSession.startRunning() }
+            let running = self.captureSession.isRunning
+            DispatchQueue.main.async {
+                self.isRunning = running
+                if running { self.onInterruptionEnded?() }
+                else { self.onError?("The camera could not restart. Close other camera apps and retry.") }
+            }
+        }
     }
 
     @objc private func interrupted(_ notification: Notification) {
-        report("Camera capture is unavailable while another app is using it or the phone is locked.")
+        var reason = "unknown"
+        if let raw = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int,
+           let value = AVCaptureSession.InterruptionReason(rawValue: raw) {
+            switch value {
+            case .videoDeviceNotAvailableInBackground: reason = "background"
+            case .audioDeviceInUseByAnotherClient: reason = "audio in use"
+            case .videoDeviceInUseByAnotherClient: reason = "camera in use by another app"
+            case .videoDeviceNotAvailableWithMultipleForegroundApps: reason = "multiple foreground apps"
+            case .videoDeviceNotAvailableDueToSystemPressure: reason = "system pressure (too hot)"
+            default: reason = "code \(raw)"
+            }
+        }
+        DiagnosticLog.write("Capture interrupted: reason=\(reason)")
+        let message = "Camera capture is unavailable while another app is using it or the phone is locked."
+        DispatchQueue.main.async { self.onInterrupted?(message) }
+    }
+
+    @objc private func interruptionEnded(_ notification: Notification) {
+        DiagnosticLog.write("Capture interruption ended")
+        DispatchQueue.main.async { self.onInterruptionEnded?() }
+    }
+
+    // MARK: System pressure
+
+    /// Apple recommends lowering the frame rate when the camera reports serious system
+    /// pressure. Otherwise iOS throttles capture unpredictably and, at the shutdown level,
+    /// interrupts it. This is common in long wired sessions: charging plus 60 fps capture
+    /// and H.264 encoding heats the phone.
+    private func pressureAdjustedFPS(for device: AVCaptureDevice) -> Int32 {
+        let level = device.systemPressureState.level
+        guard level == .serious || level == .critical || level == .shutdown,
+              formatFPS > Self.pressureLimitedFPS,
+              device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+                  $0.minFrameRate <= Double(Self.pressureLimitedFPS) && $0.maxFrameRate >= Double(Self.pressureLimitedFPS)
+              }) else { return formatFPS }
+        return Self.pressureLimitedFPS
+    }
+
+    private func observePressure(of device: AVCaptureDevice) {
+        pressureObservation?.invalidate()
+        pressureObservation = device.observe(\.systemPressureState, options: [.new]) { [weak self] device, _ in
+            self?.sessionQueue.async { self?.applyPressureLimit(to: device) }
+        }
+    }
+
+    private func applyPressureLimit(to device: AVCaptureDevice) {
+        guard configured, device === currentDevice, formatFPS > 0 else { return }
+        let target = pressureAdjustedFPS(for: device)
+        guard target != appliedFPS else { return }
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            let duration = CMTime(value: 1, timescale: target)
+            device.activeVideoMinFrameDuration = .invalid
+            device.activeVideoMaxFrameDuration = .invalid
+            device.activeVideoMinFrameDuration = duration
+            device.activeVideoMaxFrameDuration = duration
+            appliedFPS = target
+            DiagnosticLog.write("System pressure \(device.systemPressureState.level.rawValue): capture at \(target) fps (format \(formatFPS) fps)")
+        } catch {
+            DiagnosticLog.write("System pressure frame-rate change failed: \(error.localizedDescription)")
+        }
     }
 }
 

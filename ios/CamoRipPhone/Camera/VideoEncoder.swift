@@ -115,17 +115,36 @@ final class VideoEncoder {
             throw NSError(domain: "CamoRip.Encoder", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Invalid video encoder settings."])
         }
+        // Low-latency rate control is VideoToolbox's mode for video calls: it keeps frame
+        // sizes even (no bitrate bursts queueing behind each other on the link) and does not
+        // hold frames in the encoder. Not every device supports it; fall back to the
+        // standard rate control rather than failing.
+        do { return try open(settings, lowLatency: true) }
+        catch {
+            DiagnosticLog.write("Low-latency H.264 encoder unavailable (\(error.localizedDescription)); using standard rate control")
+            return try open(settings, lowLatency: false)
+        }
+    }
+
+    private func open(_ settings: Settings, lowLatency: Bool) throws -> VTCompressionSession {
         var created: VTCompressionSession?
+        let specification: CFDictionary? = lowLatency
+            ? [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true] as CFDictionary : nil
         let result = VTCompressionSessionCreate(allocator: nil, width: settings.width, height: settings.height,
-            codecType: kCMVideoCodecType_H264, encoderSpecification: nil, imageBufferAttributes: nil,
+            codecType: kCMVideoCodecType_H264, encoderSpecification: specification, imageBufferAttributes: nil,
             compressedDataAllocator: nil, outputCallback: Self.output,
             refcon: Unmanaged.passUnretained(self).toOpaque(), compressionSessionOut: &created)
         guard result == noErr, let session = created else { throw Self.error(result) }
         do {
             try Self.require(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue))
             try Self.require(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse))
-            try Self.require(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel))
+            // Low-latency mode accepts only the constrained profiles. Constrained High is High
+            // without B-frames, which this stream never uses, so Windows decodes it unchanged.
+            try Self.require(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel,
+                value: lowLatency ? kVTProfileLevel_H264_ConstrainedHigh_AutoLevel : kVTProfileLevel_H264_High_AutoLevel))
             try Self.require(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: settings.bitrate)))
+            // Best effort: favour sustaining the capture frame rate over per-frame quality.
+            let speedResult = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
             VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: settings.fps))
             VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: settings.fps * 2))
             VTSessionSetProperty(session, key: kVTCompressionPropertyKey_H264EntropyMode, value: kVTH264EntropyMode_CABAC)
@@ -149,7 +168,7 @@ final class VideoEncoder {
                                                   allocator: nil, valueOut: &value)
                 hardware = (value as? Bool).map { $0 ? "true" : "false" } ?? "unknown (status \(status))"
             }
-            DiagnosticLog.write("Encoder ready: H.264 High \(settings.width)x\(settings.height) @ \(settings.fps), target=\(settings.bitrate), hardware=\(hardware), maxFrameDelay=\(bounded ? "1" : "default"), delayPropertyStatus=\(delayResult)")
+            DiagnosticLog.write("Encoder ready: H.264 \(lowLatency ? "Constrained High, low-latency rate control" : "High") \(settings.width)x\(settings.height) @ \(settings.fps), target=\(settings.bitrate), hardware=\(hardware), maxFrameDelay=\(bounded ? "1" : "default"), delayPropertyStatus=\(delayResult), speedPriorityStatus=\(speedResult)")
             return session
         } catch {
             VTCompressionSessionInvalidate(session)

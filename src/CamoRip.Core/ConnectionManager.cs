@@ -14,6 +14,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     public event EventHandler<CameraState>? CameraStateReceived;
     public bool SupportsCameraSettings { get; private set; }
     public bool SupportsBitrateControl { get; private set; }
+    public bool SupportsKeyframeRequest { get; private set; }
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;
     public event EventHandler<AvailableCameras>? CamerasReceived;
@@ -97,6 +98,9 @@ public sealed class ConnectionManager : IAsyncDisposable
         _startAfterConfigure = false;
         return SendAsync(new StopStream(), ct);
     }
+    /// <summary>Asks the phone for an immediate IDR. Older phone apps reject unknown messages, so this is capability-gated.</summary>
+    public Task RequestKeyframeAsync(CancellationToken ct = default) =>
+        SupportsKeyframeRequest && IsStreaming ? SendAsync(new RequestKeyframe(), ct) : Task.CompletedTask;
     public Task ListCamerasAsync(CancellationToken ct = default) => SendAsync(new ListCameras(), ct);
     public Task SwitchCameraAsync(string? cameraId, CancellationToken ct = default) =>
         SendAsync(new SwitchCamera { CameraId = cameraId }, ct);
@@ -144,6 +148,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             SupportsAirPreview = false;
             SupportsAirZoneWidth = false;
             SupportsBitrateControl = false;
+            SupportsKeyframeRequest = false;
             _configurationPending = false;
             _startAfterConfigure = false;
             ActiveTransport = TransportType.None;
@@ -182,6 +187,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             SupportsAirPreview = hello.Capabilities.Contains("air_preview_v1");
             SupportsAirZoneWidth = hello.Capabilities.Contains("air_zone_width_v1");
             SupportsBitrateControl = hello.Capabilities.Contains("bitrate_control_v1");
+            SupportsKeyframeRequest = hello.Capabilities.Contains("keyframe_request_v1");
             DeviceName = string.IsNullOrWhiteSpace(hello.DeviceName) ? "iPhone" : hello.DeviceName;
             _sessionReady = true;
             _desiredStreaming = true;

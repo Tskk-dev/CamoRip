@@ -12,6 +12,8 @@ namespace CamoRip.Core.Transport;
 public sealed class WirelessTransport : IConnectionTransport
 {
     public const int Port = 7781;
+    /// <summary>Closes an authenticated connection that has sent nothing for this long.</summary>
+    public TimeSpan IdleTimeout { get; init; } = TimeSpan.FromSeconds(8);
     public event EventHandler<ControlMessage>? ControlMessageReceived;
     public event EventHandler<MediaFrame>? FrameReceived;
     public event EventHandler<TransportState>? StateChanged;
@@ -78,6 +80,7 @@ public sealed class WirelessTransport : IConnectionTransport
                 using var client = await listener.AcceptTcpClientAsync(ct);
                 if (client.Client.RemoteEndPoint is not IPEndPoint peer || !WirelessIdentity.IsLocalPeer(peer.Address)) continue;
                 _client = client; client.NoDelay = true;
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
                 using var tls = new SslStream(client.GetStream(), false);
                 using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
@@ -98,16 +101,27 @@ public sealed class WirelessTransport : IConnectionTransport
                 parser.ControlMessageParsed += (_, message) => ControlMessageReceived?.Invoke(this, message);
                 parser.FrameParsed += (_, frame) => { if (frame.IsVideo) FrameReceived?.Invoke(this, frame); };
                 var buffer = new byte[64 * 1024];
+                // The phone sends a ping and camera_state every 2 s. Silence means the link
+                // is half-open (sleep, roaming); drop it so the phone can reconnect quickly
+                // instead of waiting for TCP retransmission to give up.
+                using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 while (!ct.IsCancellationRequested)
                 {
-                    var count = await tls.ReadAsync(buffer, ct);
+                    idle.CancelAfter(IdleTimeout);
+                    var count = await tls.ReadAsync(buffer, idle.Token);
                     if (count == 0) break;
                     parser.Feed(buffer.AsSpan(0, count));
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-            catch (Exception ex) when (ex is IOException or SocketException or AuthenticationException or OperationCanceledException or ObjectDisposedException or JsonException or InvalidOperationException)
-            { Report(authenticated ? "Wi-Fi interrupted. Waiting for the paired phone to reconnect." : "Wireless authentication did not complete. Rescan an unexpired QR code if needed."); }
+            catch (Exception ex)
+            {
+                // Any failure of one connection (malformed packet, oversized auth line, idle
+                // timeout) must end only that connection, never the accept loop.
+                Report(authenticated ? "Wi-Fi interrupted. Waiting for the paired phone to reconnect." : "Wireless authentication did not complete. Rescan an unexpired QR code if needed.");
+                if (ex is not (IOException or SocketException or AuthenticationException or OperationCanceledException or ObjectDisposedException))
+                    Diagnostic?.Invoke(this, $"Wireless connection closed: {ex.GetType().Name}: {ex.Message}");
+            }
             finally
             {
                 _stream = null; _client = null;

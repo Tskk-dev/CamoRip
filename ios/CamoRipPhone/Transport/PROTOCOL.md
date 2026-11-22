@@ -73,6 +73,16 @@ To bound delay the phone permits three video sends in flight. If a compressed
 reference frame is dropped it discards delta frames until a fresh keyframe with
 SPS/PPS, and requests that keyframe from VideoToolbox.
 
+## Keyframe requests (`keyframe_request_v1`)
+
+Phones that include `keyframe_request_v1` in Hello accept
+`{"type":"request_keyframe"}` while streaming and force the next encoded frame to
+be an IDR. Windows sends it (at most four per second) whenever it discarded video
+and is waiting for a keyframe, for example after a compressed-queue overflow or a
+decoder error, so recovery takes one round trip instead of up to the two-second
+keyframe interval. Windows never sends it to phones without the capability: older
+phones close the stream on unknown control types.
+
 ## Camera controls extension (`camera_controls_v1`)
 
 Phones that implement this extension include `camera_controls_v1` in Hello.
@@ -113,5 +123,11 @@ AVFoundation device, filtered to 720p30/60, 1080p30/60 and 4K30. Configure and
 configure_ack carry an integer `request_id`; the phone echoes the request ID.
 An unsolicited camera-switch acknowledgement uses ID 0. Older peers omit the ID.
 Windows ignores superseded nonzero acknowledgements. Reconfiguration stops the
-pipeline and resumes only if the user still wants streaming. The acknowledged
-mode determines the native Windows media type and channel dimensions.
+pipeline and resumes only if the user still wants streaming. The acknowledgement
+of a mode Windows requested determines the native Windows media type and channel
+dimensions. An unsolicited acknowledgement (camera switch) keeps the current
+Windows camera format, and frames are scaled to fit it, because rebuilding the
+Windows camera disconnects any app (for example a video call) using it.
+
+Under serious system pressure the phone captures at 30 fps without changing the
+acknowledged mode; the Windows camera repeats frames to keep its nominal rate.

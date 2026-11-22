@@ -32,6 +32,16 @@ public sealed class H264Decoder : IDisposable
     private int _resetPending;
     private bool _waitingForKeyframe = true;
     private bool _disposed;
+    private int _consecutiveFailures;
+    private const int HardwareFailureLimit = 3;
+    private bool HardwareConfirmed => BackendStatus.StartsWith("D3D11 hardware confirmed", StringComparison.Ordinal);
+
+    private static bool IsDeviceFailure(int hresult) => unchecked((uint)hresult) is
+        0x887A0005 or // DXGI_ERROR_DEVICE_REMOVED
+        0x887A0006 or // DXGI_ERROR_DEVICE_HUNG
+        0x887A0007 or // DXGI_ERROR_DEVICE_RESET
+        0x887A0020 or // DXGI_ERROR_DRIVER_INTERNAL_ERROR
+        0xC00D6D76;   // MF_E_UNSUPPORTED_D3D_TYPE (GPU surface could not be read back)
 
     public void Feed(MediaFrame frame)
     {
@@ -50,9 +60,21 @@ public sealed class H264Decoder : IDisposable
             {
                 if (Interlocked.Exchange(ref _resetPending, 0) != 0) ResetCore();
                 SubmitAndRead(frame);
+                _consecutiveFailures = 0;
             }
             catch (COMException error)
             {
+                // A corrupt access unit also surfaces as a COM error. Treat it as a
+                // stream error (reset, wait for the next IDR) and keep the GPU decoder,
+                // unless the GPU itself failed, the hardware path never produced a
+                // frame, or the hardware decoder keeps failing on fresh keyframes.
+                if (_preferHardware && !IsDeviceFailure(error.HResult) && HardwareConfirmed &&
+                    ++_consecutiveFailures < HardwareFailureLimit)
+                {
+                    ResetCore();
+                    throw;
+                }
+                _consecutiveFailures = 0;
                 // Recreate the MFT without a device manager after a rejected
                 // hardware format, device removal or GPU readback failure.
                 var fallback = Native.CamoRipDecoderFallBackToSoftware(_handle, error.HResult);

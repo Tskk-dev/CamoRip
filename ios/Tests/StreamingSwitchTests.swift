@@ -533,4 +533,46 @@ final class StreamingSwitchTests: XCTestCase {
         XCTAssertTrue(rig.pc.frames.isEmpty)
         XCTAssertFalse(rig.trace.events.contains { $0.hasPrefix("prepare:") })
     }
+
+    @MainActor func testEncoderErrorRebuildsEncoderBeforeNextStart() async throws {
+        let rig = try await connected()
+        rig.encoder.onError?(NSError(domain: NSOSStatusErrorDomain, code: -12903))
+        await settle()
+        guard case .error = rig.phone.state else { return XCTFail("Expected encoder error") }
+        XCTAssertTrue(rig.pc.controls.contains { $0.type == "error" })
+        rig.trace.events.removeAll(); rig.pc.controls.removeAll()
+        try rig.pc.send(.startStream); await settle()
+        XCTAssertEqual(rig.phone.state, .streaming)
+        XCTAssertTrue(rig.trace.events.contains("prepare:1920x1080@60"))
+        XCTAssertTrue(rig.pc.controls.contains { $0.type == "start_stream" })
+    }
+
+    @MainActor func testKeyframeRequestForcesIDROnlyWhileStreaming() async throws {
+        let rig = try await connected(streaming: false)
+        try rig.pc.send(.requestKeyframe); await settle()
+        XCTAssertFalse(rig.trace.events.contains("keyframe"))
+        try rig.pc.send(.startStream); await settle()
+        rig.trace.events.removeAll()
+        try rig.pc.send(.requestKeyframe); await settle()
+        XCTAssertEqual(rig.trace.events, ["keyframe"])
+    }
+
+    @MainActor func testInterruptionStopsVideoAndResumesWhenCaptureReturns() async throws {
+        let rig = try await connected()
+        rig.phone.cameraInterrupted("Camera in use")
+        guard case .error = rig.phone.state else { return XCTFail("Expected interruption error") }
+        rig.trace.events.removeAll(); rig.pc.controls.removeAll()
+        rig.phone.cameraInterruptionEnded()
+        XCTAssertEqual(rig.phone.state, .streaming)
+        XCTAssertTrue(rig.trace.events.contains("prepare:1920x1080@60"))
+        XCTAssertTrue(rig.pc.controls.contains { $0.type == "start_stream" })
+    }
+
+    @MainActor func testStopAfterInterruptionPreventsAutomaticResume() async throws {
+        let rig = try await connected()
+        rig.phone.cameraInterrupted("Camera in use")
+        try rig.pc.send(.stopStream); await settle()
+        rig.phone.cameraInterruptionEnded()
+        XCTAssertNotEqual(rig.phone.state, .streaming)
+    }
 }

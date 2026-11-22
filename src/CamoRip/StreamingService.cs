@@ -104,8 +104,12 @@ internal sealed class StreamingService : IAsyncDisposable
         {
             var mode = VideoMode.Parse(configuration.Resolution, configuration.Fps)!;
             _frames.Reset("capture mode changed");
-            _camera?.SetMode(mode);
-            Ui(() => SetStatus("VideoStatus", $"Capture: {mode} · Webcam: {(_camera?.IsAvailable == true ? mode.ToString() : "unavailable")}"));
+            // Rebuilding the Windows camera disconnects apps that have it open (an active
+            // call loses its video). Only do that for a mode the user asked for; an
+            // unsolicited acknowledgement (camera switch, front camera at 720p) keeps the
+            // current webcam format and frames are scaled to fit it.
+            if (_modeRequested) QueueCameraMode(mode);
+            else Ui(() => SetStatus("VideoStatus", $"Capture: {mode} · Webcam: {(_camera is { IsAvailable: true } camera ? camera.Mode.ToString() : "unavailable")}"));
         };
         _connection.ConfigurationAcknowledged += (_, configuration) => App.Log("INFO", $"Capture configured: {configuration.Resolution} at {configuration.Fps} fps.");
         _connection.StreamStateChanged += (_, streaming) =>
@@ -127,7 +131,10 @@ internal sealed class StreamingService : IAsyncDisposable
             Interlocked.Exchange(ref _lastUsbTicks, now);
             Interlocked.Add(ref _receivedBytes, frame.Payload.Length);
             _arrivals.Record(frame.Header.PtsUs, now);
-            _frames.Enqueue(frame);
+            // After any recovery (queue overflow, decoder error, camera switch) the queue
+            // discards delta frames until an IDR. Ask the phone for one instead of freezing
+            // until its next scheduled keyframe (up to two seconds).
+            if (!_frames.Enqueue(frame) && !frame.Header.IsKeyframe) RequestKeyframeThrottled(now);
         };
         // A dedicated MTA thread keeps decode independent of thread-pool/UI load.
         _decodeTask = Task.Factory.StartNew(DecodeFrames, CancellationToken.None,
@@ -161,6 +168,38 @@ internal sealed class StreamingService : IAsyncDisposable
         });
     }
 
+    // Virtual camera rebuilds are slow (Media Foundation removes and re-adds the device).
+    // Run them in order off the network receive thread so control traffic keeps flowing.
+    private Task _cameraModeChange = Task.CompletedTask;
+    private readonly object _cameraModeLock = new();
+    private volatile bool _modeRequested;
+    private void QueueCameraMode(VideoMode mode)
+    {
+        lock (_cameraModeLock)
+            _cameraModeChange = _cameraModeChange.ContinueWith(_ =>
+            {
+                if (_closing) return;
+                try { _camera?.SetMode(mode); }
+                catch (Exception ex) { App.Log(ex); }
+                Ui(() => SetStatus("VideoStatus", $"Capture: {mode} · Webcam: {(_camera?.IsAvailable == true ? mode.ToString() : "unavailable")}"));
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    }
+
+    private long _lastKeyframeRequestTicks;
+    private void RequestKeyframeThrottled(long now)
+    {
+        var last = Interlocked.Read(ref _lastKeyframeRequestTicks);
+        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < TimeSpan.FromMilliseconds(250)) return;
+        if (Interlocked.CompareExchange(ref _lastKeyframeRequestTicks, now, last) != last) return;
+        _ = RequestKeyframeCoreAsync();
+        async Task RequestKeyframeCoreAsync()
+        {
+            try { await _connection.RequestKeyframeAsync(); }
+            catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
+            catch (Exception ex) { App.Log(ex); }
+        }
+    }
+
     private async Task ConfigurePhone()
     {
         try { await SetVideoModeAsync(VideoMode.Parse(App.Settings.CaptureResolution, App.Settings.CaptureFps) ?? VideoMode.Default); }
@@ -186,12 +225,14 @@ internal sealed class StreamingService : IAsyncDisposable
             _connection.ConfigurationAcknowledged += Ack;
             _connection.Failure += Failed; _connection.StateChanged += Disconnected;
             App.Log("INFO", $"Requesting capture mode: {mode}; H.264 target bitrate={bitrate / 1_000_000.0:F1} Mbps.");
+            _modeRequested = true;
             await _connection.ConfigureAsync(mode.Resolution, mode.Fps, "h264", bitrate);
             await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(15));
             AppliedBitrate = bitrate;
         }
         finally
         {
+            _modeRequested = false;
             _connection.ConfigurationAcknowledged -= Ack;
             _connection.Failure -= Failed; _connection.StateChanged -= Disconnected;
             ChangingMode = false; Changed?.Invoke(); _modeChange.Release();
@@ -398,6 +439,9 @@ internal sealed class StreamingService : IAsyncDisposable
         _previewFramesQueue.Writer.TryComplete();
         await Task.WhenAll(new[] { _cameraTask, _metricsTask }.OfType<Task>());
         while (_previewFramesQueue.Reader.TryRead(out var pending)) pending.Frame.Release();
+        Task modeChange;
+        lock (_cameraModeLock) modeChange = _cameraModeChange;
+        try { await modeChange; } catch (Exception ex) { App.Log(ex); }
         _decoder.Dispose();
         _shutdown.Dispose();
         _camera?.Dispose();
