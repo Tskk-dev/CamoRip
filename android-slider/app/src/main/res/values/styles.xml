@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.CamoRipSlider" parent="Theme.Material3Expressive.DayNight.NoActionBar">
+        <item name="colorPrimary">#455E91</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#D9E2FF</item>
+        <item name="colorOnPrimaryContainer">#152E60</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+    <style name="Theme.CamoRipSlider.Classic" parent="Theme.Material3.DayNight.NoActionBar" />
+    <style name="SliderDropdown" parent="Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu" />
+</resources>

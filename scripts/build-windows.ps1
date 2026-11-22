@@ -1,4 +1,4 @@
-param([string]$Configuration = 'Release')
+param([string]$Configuration = 'Release', [switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $projectRoot
@@ -7,16 +7,20 @@ try {
     if ($LASTEXITCODE) { throw 'Native video decoder configuration failed.' }
     cmake --build artifacts/decoder --config $Configuration
     if ($LASTEXITCODE) { throw 'Native video decoder build failed.' }
-    ctest --test-dir artifacts/decoder -C $Configuration --output-on-failure
-    if ($LASTEXITCODE) { throw 'Native preview shader checks failed.' }
+    if (-not $SkipTests) {
+        ctest --test-dir artifacts/decoder -C $Configuration --output-on-failure
+        if ($LASTEXITCODE) { throw 'Native preview shader checks failed.' }
+    }
     cmake -S src/CamoRip.MediaSource -B artifacts/native -A x64
     if ($LASTEXITCODE) { throw 'Native camera configuration failed.' }
     cmake --build artifacts/native --config $Configuration
     if ($LASTEXITCODE) { throw 'Native camera build failed.' }
-    ctest --test-dir artifacts/native -C $Configuration --output-on-failure
-    if ($LASTEXITCODE) { throw 'Native camera source smoke test failed.' }
-    dotnet test tests/CamoRip.Tests/CamoRip.Tests.csproj -c $Configuration -p:Platform=x64 --logger trx --logger "console;verbosity=normal" --results-directory artifacts/tests --blame-hang-timeout 5m
-    if ($LASTEXITCODE) { throw 'Windows tests failed.' }
+    if (-not $SkipTests) {
+        ctest --test-dir artifacts/native -C $Configuration --output-on-failure
+        if ($LASTEXITCODE) { throw 'Native camera source smoke test failed.' }
+        dotnet test tests/CamoRip.Tests/CamoRip.Tests.csproj -c $Configuration -p:Platform=x64 --logger trx --logger "console;verbosity=normal" --results-directory artifacts/tests --blame-hang-timeout 5m
+        if ($LASTEXITCODE) { throw 'Windows tests failed.' }
+    }
     dotnet publish src/CamoRip/CamoRip.csproj -c $Configuration -r win-x64 --self-contained true -p:PublishSingleFile=false -o artifacts/windows
     if ($LASTEXITCODE) { throw 'Windows application publish failed.' }
     foreach ($resource in 'CamoRip.pri', 'App.xbf', 'Views/MainWindow.xbf') {
@@ -27,6 +31,7 @@ try {
     Copy-Item -LiteralPath LICENSE,THIRD_PARTY_NOTICES.md,README.md -Destination artifacts/windows
     Copy-Item -LiteralPath src/CamoRip.MediaSource/MICROSOFT-LICENSE.txt -Destination artifacts/windows
     Copy-Item -LiteralPath docs -Destination artifacts/windows -Recurse -Force
+    if (-not $SkipTests) {
     $startup = Start-Process -FilePath (Join-Path $projectRoot 'artifacts/windows/CamoRip.exe') -ArgumentList '--startup-check' -WindowStyle Hidden -PassThru
     if (-not $startup.WaitForExit(30000)) {
         Stop-Process -Id $startup.Id -ErrorAction SilentlyContinue
@@ -38,5 +43,6 @@ try {
         throw "Published application startup failed (exit $($startup.ExitCode))."
     }
     Write-Host 'Published application startup check passed.'
+    }
 } finally { Pop-Location }
 

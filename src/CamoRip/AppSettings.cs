@@ -15,6 +15,10 @@ internal sealed class AppSettings
     private string _storageDirectory = DirectoryPath;
     private string FilePath => Path.Combine(_storageDirectory, "settings.json");
     public bool Logging { get; set; } = true;
+    public bool SliderEnabled { get; set; }
+    public int SliderPort { get; set; } = 52468;
+    public string SliderMode { get; set; } = "usb";
+    public string AdbPath { get; set; } = "";
     public bool CloseToTray { get; set; } = true;
     public bool StartMinimized { get; set; }
     public bool LaunchAtSignIn { get; set; }
@@ -32,6 +36,8 @@ internal sealed class AppSettings
         {
             var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(Path.Combine(directory, "settings.json"))) ?? new();
             settings._storageDirectory = directory;
+            if (settings.SliderPort is < 1 or > 65535) settings.SliderPort = 52468;
+            if (settings.SliderMode is not ("usb" or "tcp" or "udp")) settings.SliderMode = "usb";
             if (settings.PreviewFps is not (0 or 15 or 30 or 60)) settings.PreviewFps = 60;
             if (!Enum.IsDefined(settings.CaptureQuality)) settings.CaptureQuality = Core.Video.VideoQuality.Balanced;
             if (!double.IsFinite(settings.CustomBitrateMbps) || settings.CustomBitrateMbps is < 1 or > 50) settings.CustomBitrateMbps = 20;

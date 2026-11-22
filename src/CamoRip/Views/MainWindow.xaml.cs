@@ -15,11 +15,21 @@ public sealed partial class MainWindow : Window
     private AirConfigure airSettings = new();
     private int airMask;
     private long airUpdateTicks;
+    private long captureStatsTicks;
+
+    private void resetCaptureStats()
+    {
+        captureStatsTicks = 0;
+        AirCaptureRate.Text = "Actual capture: —";
+        AirCaptureDetails.Text = !_service.Connected ? "Connect iPhone" :
+            _service.Connection.SupportsCaptureStats ? "Waiting for capture" : "Update iPhone app";
+    }
     private int airImageWidth = 1280, airImageHeight = 720;
 
     private async void onAirPreview(object sender, RoutedEventArgs e)
     {
         if (!_ready || _updating || !airRequested) return;
+        resetCaptureStats();
         await applyAir(previewOnly: true);
         Refresh();
     }
@@ -59,6 +69,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_ready || _updating) return;
         airRequested = AirEnabled.IsOn;
+        resetCaptureStats();
         if (!airRequested) airBridge.SetEnabled(false);
         await applyAir();
         Refresh();
@@ -188,8 +199,13 @@ public sealed partial class MainWindow : Window
             slider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _editingSliders.Remove(slider)), true);
             slider.PointerCaptureLost += (_, _) => _editingSliders.Remove(slider);
         }
-        _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(RefreshModes);
+        _service.Connection.ConfigurationAcknowledged += (_, _) => App.Ui(() => { resetCaptureStats(); RefreshModes(); });
         var settings = App.Settings;
+        SliderEnabled.IsOn = settings.SliderEnabled;
+        SliderPort.Value = settings.SliderPort;
+        SliderMode.SelectedIndex = settings.SliderMode switch { "tcp" => 1, "udp" => 2, _ => 0 };
+        SliderAdb.Text = settings.AdbPath;
+        _app.Slider.Changed += status => App.Ui(() => SliderStatus.Text = status);
         Quality.ItemsSource = Enum.GetValues<VideoQuality>();
         Quality.SelectedItem = settings.CaptureQuality;
         CustomBitrate.Value = settings.CustomBitrateMbps;
@@ -225,6 +241,13 @@ public sealed partial class MainWindow : Window
         };
         _service.Connection.Failure += (_, message) => App.Ui(() => { ConnectionNotice.Message = message; ConnectionNotice.IsOpen = true; });
         _service.Connection.CameraStateReceived += (_, state) => App.Ui(() => ApplyState(state));
+        _service.Connection.CaptureStatsReceived += (_, stats) => App.Ui(() =>
+        {
+            captureStatsTicks = Stopwatch.GetTimestamp();
+            AirCaptureRate.Text = stats.Active ? $"Actual capture: {stats.ActualFps:F1} fps" : "Actual capture: —";
+            AirCaptureDetails.Text = stats.Active ?
+                $"{stats.Resolution} · configured {stats.ConfiguredFps} fps · {stats.DroppedFrames} capture drops / {stats.SampleSeconds:F1}s" : "Not streaming";
+        });
         airBridge.StatusChanged += (_, status) => App.Ui(() => AirStatus.Text = status);
         _service.Connection.AirStateReceived += (_, state) =>
         {
@@ -240,6 +263,7 @@ public sealed partial class MainWindow : Window
         };
         _service.Connection.StateChanged += (_, state) => App.Ui(() =>
         {
+            resetCaptureStats();
             _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = Torch.IsEnabled = TorchLevel.IsEnabled = false;
             if (state == TransportState.Connected) ConnectionNotice.IsOpen = false;
             else
@@ -258,7 +282,12 @@ public sealed partial class MainWindow : Window
         });
         _service.Connection.CameraSwitched += (_, _) => App.Ui(() => { _pending.Clear(); _state = null; _switching = false; _confirmedId = _requestId; Adjustments.IsEnabled = false; });
         _commands = DispatcherQueue.CreateTimer(); _commands.Interval = TimeSpan.FromMilliseconds(50);
-        _commands.Tick += async (_, _) => await FlushCommands(); _commands.Start();
+        _commands.Tick += async (_, _) =>
+        {
+            if (captureStatsTicks != 0 && Stopwatch.GetElapsedTime(captureStatsTicks).TotalSeconds > 3) resetCaptureStats();
+            await FlushCommands();
+        };
+        _commands.Start();
         AppWindow.Closing += (_, e) =>
         {
             if (_exiting) return;
@@ -423,6 +452,65 @@ public sealed partial class MainWindow : Window
         PreviewPage.Visibility = selected == "preview" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = selected == "settings" ? Visibility.Visible : Visibility.Collapsed;
         AirPage.Visibility = selected == "air" ? Visibility.Visible : Visibility.Collapsed;
+        SliderPage.Visibility = selected == "slider" ? Visibility.Visible : Visibility.Collapsed;
+        ControlStatus.Visibility = selected is "slider" or "air" ? Visibility.Collapsed : Visibility.Visible;
+    }
+    private async void onSliderEnabled(object sender, RoutedEventArgs e)
+    {
+        if (!_ready || _updating || AppSettings.Isolated) return;
+        App.Settings.SliderEnabled = SliderEnabled.IsOn;
+        App.Settings.Save();
+        try { if (SliderEnabled.IsOn) await _app.Slider.StartAsync(); else await _app.Slider.StopAsync(); }
+        catch (Exception error) { SliderStatus.Text = error.Message; App.Log(error); }
+    }
+
+    private async void onSliderApply(object sender, RoutedEventArgs e)
+    {
+        if (!double.IsFinite(SliderPort.Value) || SliderPort.Value is < 1 or > 65535 || SliderPort.Value != Math.Truncate(SliderPort.Value))
+        { SliderStatus.Text = "Choose a port from 1 to 65535."; return; }
+        try {
+        App.Settings.SliderPort = (int)SliderPort.Value;
+        App.Settings.SliderMode = SliderMode.SelectedIndex switch { 1 => "tcp", 2 => "udp", _ => "usb" };
+        App.Settings.AdbPath = SliderAdb.Text.Trim();
+        App.Settings.Save();
+        if (SliderEnabled.IsOn) await _app.Slider.StartAsync();
+        if (SliderMode.SelectedIndex != 0)
+            SliderStatus.Text = "PC address: " + string.Join(", ", (await System.Net.Dns.GetHostAddressesAsync(System.Net.Dns.GetHostName()))
+                .Where(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(address)));
+        } catch (Exception error) { SliderStatus.Text = error.Message; App.Log(error); }
+    }
+
+    private async void onSliderScan(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var devices = await SliderReceiver.DevicesAsync(SliderAdb.Text.Trim());
+            SliderDevices.ItemsSource = devices;
+            SliderDevices.SelectedIndex = devices.Length == 1 ? 0 : -1;
+            SliderStatus.Text = devices.Length == 0 ? "Unlock the tablet and allow USB debugging." : "Select your tablet";
+        }
+        catch (Exception error) { SliderStatus.Text = error.Message; }
+    }
+
+    private async void onSliderConnect(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (SliderDevices.SelectedItem is not string serial) { SliderStatus.Text = "Find and select your tablet first."; return; }
+            if (!double.IsFinite(SliderPort.Value) || SliderPort.Value is < 1 or > 65535 || SliderPort.Value != Math.Truncate(SliderPort.Value))
+            { SliderStatus.Text = "Choose a port from 1 to 65535."; return; }
+            App.Settings.SliderPort = (int)SliderPort.Value;
+            App.Settings.SliderMode = "usb";
+            App.Settings.SliderEnabled = true;
+            App.Settings.AdbPath = SliderAdb.Text.Trim();
+            App.Settings.Save();
+            SliderMode.SelectedIndex = 0;
+            _updating = true; SliderEnabled.IsOn = true; _updating = false;
+            await _app.Slider.StartAsync();
+            await SliderReceiver.ConnectUsbAsync(SliderAdb.Text.Trim(), serial, App.Settings.SliderPort);
+            SliderStatus.Text = "Ready · tap Connect on the tablet";
+        }
+        catch (Exception error) { SliderStatus.Text = error.Message; }
     }
     private async Task Invoke(Func<Task> action)
     { try { await action(); } catch (Exception ex) { Diagnostic.Text = ex.Message; App.Log(ex); } }

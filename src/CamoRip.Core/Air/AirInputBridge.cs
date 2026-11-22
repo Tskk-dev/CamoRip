@@ -81,25 +81,15 @@ public sealed class AirInputBridge : IDisposable
             view.WriteArray(0, bytes, 0, bytes.Length);
             // Raise status only when it changes: this runs on every AIR update and every
             // 100 ms tick, and each event costs a UI-thread dispatch.
-            bool paused = updated != 0 && Environment.TickCount64 - updated >= 500;
-            if (value != statusMask || paused != statusPaused)
-            {
-                statusMask = value; statusPaused = paused;
-                report(paused
-                    ? "AIR paused: phone updates timed out; all zones released."
-                    : $"AIR zones (top to bottom): {string.Concat(Enumerable.Range(0, 6).Select(zone => (value >> zone) & 1))} · Brokenithm connected");
-            }
+            report(updated != 0 && Environment.TickCount64 - updated >= 500 ? "Input paused" : "Connected");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             close();
-            statusMask = -1;
-            report("Waiting for Brokenithm shared buffer. Start the game and its input DLL.");
+            report("Waiting for game");
         }
     }
 
-    private int statusMask = -1;
-    private bool statusPaused;
     private string? status;
     private void report(string text)
     {

@@ -22,3 +22,5 @@
 *.sln text eol=crlf
 *.props text eol=crlf
 *.targets text eol=crlf
+
+android-slider/gradlew text eol=lf

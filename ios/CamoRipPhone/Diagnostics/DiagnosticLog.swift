@@ -1,11 +1,28 @@
 import Foundation
 
+struct CaptureStats: Codable {
+    let configuredFPS: Int
+    let resolution: String
+    let capturedFrames: Int
+    let droppedFrames: Int
+    let sampleSeconds: Double
+    let active: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case configuredFPS = "configured_fps", capturedFrames = "captured_frames"
+        case droppedFrames = "dropped_frames", sampleSeconds = "sample_seconds"
+        case resolution, active
+    }
+}
+
 /// Small on-device log and per-stage frame counters for diagnosing slow streams.
 /// The Documents log is exposed in Files so it can be copied from the iPhone.
 enum DiagnosticLog {
     enum Stage: String, CaseIterable { case captured, captureDropped, encodeDropped, encoded, usbSent, usbBackpressure }
     private static let lock = NSLock()
     private static var counts = Dictionary(uniqueKeysWithValues: Stage.allCases.map { ($0, 0) })
+    private static var capturedTotal = 0
+    private static var droppedTotal = 0
     private static let queue = DispatchQueue(label: "com.camorip.diagnostics")
 
     private static var fileURL: URL {
@@ -14,7 +31,16 @@ enum DiagnosticLog {
     }
 
     static func record(_ stage: Stage) {
-        lock.lock(); counts[stage, default: 0] += 1; lock.unlock()
+        lock.lock()
+        counts[stage, default: 0] += 1
+        if stage == .captured { capturedTotal += 1 }
+        if stage == .captureDropped { droppedTotal += 1 }
+        lock.unlock()
+    }
+
+    static func captureSnapshot() -> (frames: Int, dropped: Int, time: Double) {
+        lock.lock(); defer { lock.unlock() }
+        return (capturedTotal, droppedTotal, ProcessInfo.processInfo.systemUptime)
     }
 
     static func takeMetrics() -> String {

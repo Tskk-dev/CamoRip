@@ -18,6 +18,7 @@ public partial class App : Application
     private static DispatcherQueue? _dispatcher;
     internal static AppSettings Settings { get; } = AppSettings.Load();
     internal StreamingService Service { get; } = new();
+    internal SliderReceiver Slider { get; } = new();
     internal static string LogDirectory => Path.Combine(AppSettings.DirectoryPath, "Logs");
     public App() { InitializeComponent(); }
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -55,6 +56,7 @@ public partial class App : Application
             _startupCheckTimer.Start();
         }
         else if (!AppSettings.Isolated) Run(Service.StartAsync);
+        if (!AppSettings.Isolated && Settings.SliderEnabled) Run(Slider.StartAsync);
     }
     internal void ShowWindow() { _window?.ShowFromTray(); }
     internal async Task ExitAsync()
@@ -62,6 +64,7 @@ public partial class App : Application
         if (_exiting) return;
         _exiting = true;
         if (_window is not null) _window.PrepareExit();
+        try { await Slider.DisposeAsync(); } catch (Exception ex) { Log(ex); }
         try { await Service.DisposeAsync(); } catch (Exception ex) { Log(ex); }
         _tray?.Dispose();
         _activationWait?.Unregister(null);
